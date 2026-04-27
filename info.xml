@@ -6,12 +6,12 @@
   <license>AGPL-3.0</license>
   <maintainer>
     <author>Richard van Oosterhout</author>
-    <email>richard.van.oosterhout@gmail.com</email>
+    <email>webteam@onvergetelijk.nl</email>
   </maintainer>
   <urls>
-    <url desc="Main Extension Page">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner</url>
-    <url desc="Documentation">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner/wiki</url>
-    <url desc="Support">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner/issues</url>
+    <url desc="Main Extension Page">https://www.onvergetelijk.nl</url>
+    <url desc="Documentation">https://www.onvergetelijk.nl</url>
+    <url desc="Support">https://www.onvergetelijk.nl</url>
     <url desc="Licensing">http://www.gnu.org/licenses/agpl-3.0.html</url>
   </urls>
   <releaseDate>2026-03-29</releaseDate>
