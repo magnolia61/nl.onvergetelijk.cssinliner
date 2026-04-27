@@ -1,0 +1,12 @@
+{
+    "name": "onvergetelijk/cssinline",
+    "description": "CSS Inliner voor CiviCRM (PHP 8.4)",
+    "require": {
+        "pelago/emogrifier": "^7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Civi\\Cssinline\\": "Civi/"
+        }
+    }
+}

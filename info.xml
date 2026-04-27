@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<extension key="nl.onvergetelijk.cssinline" type="module">
+  <file>cssinliner</file>
+  <name>Onvergetelijk CSS Inliner</name>
+  <description>Converteert CSS style blocks naar inline styles in CiviCRM mailings voor optimale weergave in e-mailclients (PHP 8.4 proof).</description>
+  <license>AGPL-3.0</license>
+  <maintainer>
+    <author>Richard van Oosterhout</author>
+    <email>richard.van.oosterhout@gmail.com</email>
+  </maintainer>
+  <urls>
+    <url desc="Main Extension Page">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner</url>
+    <url desc="Documentation">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner/wiki</url>
+    <url desc="Support">https://github.com/onvergetelijk/nl.onvergetelijk.cssinliner/issues</url>
+    <url desc="Licensing">http://www.gnu.org/licenses/agpl-3.0.html</url>
+  </urls>
+  <releaseDate>2026-03-29</releaseDate>
+  <version>1.0.0</version>
+  <develStage>stable</develStage>
+  <compatibility>
+    <ver>6.11</ver>
+  </compatibility>
+  <comments>Moderne vervanger voor de verouderde fuzion cssinline, geoptimaliseerd voor PHP 8.4.</comments>
+  <classloader>
+    <psr0 prefix="CRM_" path="."/>
+    <psr4 prefix="Civi\" path="Civi"/>
+  </classloader>
+  <civix>
+    <namespace>CRM/Cssinliner</namespace>
+    <format>25.01.1</format>
+  </civix>
+  <mixins>
+    <mixin>mgd-php@1.0.0</mixin>
+    <mixin>setting-php@1.0.0</mixin>
+    <mixin>smarty@1.0.3</mixin>
+  </mixins>
+</extension>
