@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<extension key="nl.onvergetelijk.cssinline" type="module">
+<extension key="nl.onvergetelijk.cssinliner" type="module">
   <file>cssinliner</file>
   <name>Onvergetelijk CSS Inliner</name>
   <description>Converteert CSS style blocks naar inline styles in CiviCRM mailings voor optimale weergave in e-mailclients (PHP 8.4 proof).</description>
