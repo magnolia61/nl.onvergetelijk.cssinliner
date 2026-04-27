@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <extension key="nl.onvergetelijk.cssinliner" type="module">
   <file>cssinliner</file>
-  <name>Onvergetelijk CSS Inliner</name>
-  <description>Converteert CSS style blocks naar inline styles in CiviCRM mailings voor optimale weergave in e-mailclients (PHP 8.4 proof).</description>
+  <name>Onvergetelijk - CSS Inliner</name>
+  <description>Converteert CSS style blocks naar inline styles in CiviCRM mailings voor optimale weergave in e-mailclients</description>
   <license>AGPL-3.0</license>
   <maintainer>
     <author>Richard van Oosterhout</author>
@@ -14,13 +14,13 @@
     <url desc="Support">https://www.onvergetelijk.nl</url>
     <url desc="Licensing">http://www.gnu.org/licenses/agpl-3.0.html</url>
   </urls>
-  <releaseDate>2026-03-29</releaseDate>
-  <version>1.0.0</version>
+  <releaseDate>2026-04-27</releaseDate>
+  <version>3.0.0</version>
   <develStage>stable</develStage>
   <compatibility>
-    <ver>6.11</ver>
+    <ver>6.13</ver>
   </compatibility>
-  <comments>Moderne vervanger voor de verouderde fuzion cssinline, geoptimaliseerd voor PHP 8.4.</comments>
+  <comments>Onderdeel van de Onvergetelijk-extensie-suite voor Stichting Onvergetelijke Zomerkampen. Compatibel met CiviCRM 6.13, PHP 8.4 en Smarty 5.</comments>
   <classloader>
     <psr0 prefix="CRM_" path="."/>
     <psr4 prefix="Civi\" path="Civi"/>
