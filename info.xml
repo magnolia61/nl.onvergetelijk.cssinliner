@@ -2,7 +2,7 @@
 <extension key="nl.onvergetelijk.cssinliner" type="module">
   <file>cssinliner</file>
   <name>Onvergetelijk - CSS Inliner</name>
-  <description>Converteert CSS style blocks naar inline styles in CiviCRM mailings voor optimale weergave in e-mailclients</description>
+  <description>Converteert CSS style blocks naar inline styles in mailings voor optimale weergave</description>
   <license>AGPL-3.0</license>
   <maintainer>
     <author>Richard van Oosterhout</author>

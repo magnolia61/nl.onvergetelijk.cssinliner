@@ -1,4 +1,5 @@
 /vendor
 composer.lock
 *~
-*.swp
+*.swp.phpunit.result.cache
+.claude/

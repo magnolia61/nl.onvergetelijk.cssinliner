@@ -4,29 +4,37 @@
  * =======================================================================================
  * FUNCTIE-INDEX: cssinliner.php
  * =======================================================================================
- *   cssinliner_civicrm_alterMailParams()  Hook: alterMailParams
- *   _cssinliner_cleanup_html()            V2.4.7: Garandeert 100% W3C compliance en Outlook-compatibiliteit.
- *   _cssinliner_fetch_external_css()      Fetcher voor externe CSS bestanden met statische cache.
- *   cssinliner_civicrm_config()
+ * cssinliner_civicrm_pre()             Hook: pre (MessageTemplates opschonen voor DB)
+ * cssinliner_civicrm_alterMailParams() Hook: alterMailParams (Uitgaande mail inlinen & cleanen)
+ * _cssinliner_cleanup_html()           HTML Sanitisatie, token stripper & whitespace fix
+ * _cssinliner_fetch_external_css()     Fetcher voor externe CSS met statische cache (cURL)
+ * _cssinliner_analyze_templates()      Vergelijkt in/out HTML voor diff logging
+ * cssinliner_civicrm_config()          Configuratie inladen + event listeners registratie
+ * _cssinliner_on_token_eval()          civi.token.eval listener: site tokens met Smarty → placeholder
+ * _cssinliner_on_token_render()        civi.token.render listener: placeholder → raw Smarty body
+ * =======================================================================================
+ * CHANGELOG:
+ * V3.4.0 - Smarty-reparaties bij opslaan: ISOLATIE (crmScope), LOGICA ({/if}), SYNTAX ({ /if }), ENTITEIT (&gt;/&lt;/&amp;&amp;), OPERATOR (and/or→AND/OR).
+ * V3.3.0 - Dubbele witregels (<br><br>, <p><br></p><br>, etc.) worden bij render gecollapseerd tot één.
+ * V3.7.0 - CiviCRM tokens ({entity.field}) in site token Smarty-bodies worden bij civi.token.eval gesubs­titueerd met reeds opgeloste waarden → $kampstart_ts/$kampeinde_ts/$dayssince werken correct.
+ * V3.6.0 - Geen cssinliner-injectie meer nodig voor datum-override: smarty_header overschrijft {$smartynow} direct voor Testdeel/Testleid indien m61sched_ts > 0. Alle afgeleide tijdvariabelen ($smartynow_time, $weeksuntil etc.) volgen automatisch.
+ * V3.5.0 - Block-tokens (smarty_logo, checkleid/deel/top, loginrequest, intake_tips) krijgen automatisch <div>-wrapper zodat ze op eigen regel staan in editor én email.
+ * V3.2.0 - <p>-tags in site token bodies worden bij render gestript (CKEditor-vriendelijk).
+ * V3.1.0 - {ozk_checkdeel} Smarty plugin verwijderd (vervangen door {site.smarty_checkdeel}).
+ * V3.0.0 - Native site tokens met Smarty-variabelen: placeholder-techniek via civi.token.eval/render.
+ * V2.9.0 - Smarty plugin {ozk_checkdeel} toegevoegd; stap-0 debug-code verwijderd.
+ * V2.8.1 - Gedetailleerde sub-logs (niveau 4) hersteld in cleanup-functie.
+ * V2.8.0 - Geavanceerde Civi::paths() en dirname() fallback toegevoegd voor Cron/API CSS fetch.
+ * V2.7.1 - Uniforme sectiekopjes met vaste functie-prefix (bijv. [ALTERMAIL] - 1.0).
+ * V2.7.0 - Nummering per functie onafhankelijk herstart, slimme sectiekopjes per functie.
+ * V2.6.1 - Log-drempelwaarde max 4, subsectie-kopjes toegevoegd.
  * =======================================================================================
  */
 
-/*
- * nl.onvergetelijk.cssinliner
- * V2.3.6: Emogrifier + Valid HTML5 Wrapper + Alt-tag Fix + Metadata injection.
- */
-
-/**
- * 1. Laad de composer autoloader
- */
-$extRoot = __DIR__ . DIRECTORY_SEPARATOR;
+$extRoot    = __DIR__ . DIRECTORY_SEPARATOR;
 if (file_exists($extRoot . 'vendor/autoload.php')) {
     require_once $extRoot . 'vendor/autoload.php';
 }
-
-/**
- * 2. Laad de civix hulpfuncties
- */
 if (file_exists($extRoot . 'cssinliner.civix.php')) {
     require_once 'cssinliner.civix.php';
 }
@@ -34,124 +42,499 @@ if (file_exists($extRoot . 'cssinliner.civix.php')) {
 use Pelago\Emogrifier\CssInliner;
 
 /**
+ * Hook: pre
+ * Wordt getriggerd voordat een MessageTemplate wordt opgeslagen in de database.
+ */
+function cssinliner_civicrm_pre($op, $objectName, $id, &$params) {
+    $extdebug   = 'cssinliner';
+
+    if ($objectName !== 'MessageTemplate' || !in_array($op, ['create', 'edit'])) {
+        return;
+    }
+    if (empty($params['msg_html'])) {
+        return;
+    }
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [PRE] - 1.0 TEMPLATE CLEANUP VOOR DB",         "[DB-SAVE]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    $template_subj  = $params['msg_subject']    ?? 'Onvergetelijke Zomerkampen';
+
+    try {
+        $params_clean   = [
+            'html'      => strlen($params['msg_html']) . ' bytes',
+            'subject'   => $template_subj,
+            'is_final'  => FALSE
+        ];
+
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [PRE] - 1.1 START PRE-SAVE CLEANUP",         "[PRE-CLEAN]");
+        wachthond($extdebug, 2, "########################################################################");
+        
+        wachthond($extdebug, 4, "Parameters voor opschoning",                       $params_clean);
+
+        $params['msg_html'] = _cssinliner_cleanup_html($params['msg_html'], $template_subj, FALSE);
+        
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [PRE] - 1.2 TEMPLATE HTML OPGESCHOOND",         "[SUCCES]");
+        wachthond($extdebug, 2, "########################################################################");
+
+    } catch (\Exception $e) {
+        wachthond($extdebug, 1, "CRITICAL ERROR TIJDENS TEMPLATE DB CLEANUP: " . $e->getMessage(),  "[ERROR]");
+    }
+}
+
+/**
  * Hook: alterMailParams
+ * Onderschept de mail net voor verzending om CSS in te linen (UI & API/Cron).
  */
 function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
+    $extdebug   = 'cssinliner';
 
-    $extdebug = 0;
+    // Zorg dat date_format (strftime) altijd Nederlandse dag/maandnamen geeft
+    setlocale(LC_TIME, 'nl_NL.utf8', 'nl_NL', 'Dutch');
 
     if (empty($params['html'])) {
         return;
     }
 
-    wachthond($extdebug, 2, "########################################################################");
-    wachthond($extdebug, 1, "### CSSINLINER [START] V2.3.6 - HTML5 COMPLIANT MODE",         "[MAIL]");
-    wachthond($extdebug, 2, "########################################################################");
+    $log_params = [
+        'context'   => $context ?? 'ONBEKEND',
+        'html_lengte'   => strlen($params['html'])
+    ];
 
-    $original_html = $params['html'];
-    $all_css       = '';
+    // --- OZK & API FALLBACK DETECTIE MET CONTEXT LOGGING ---
+    $is_ozk_mail    = FALSE;
+    $detectie_reden = 'Geen match';
+
+    if (strpos($params['html'], 'custom_civicrm_email.css') !== FALSE) {
+        $is_ozk_mail    = TRUE;
+        $detectie_reden = 'Stylesheet link gevonden in HTML';
+    } elseif (strpos($params['html'], 'nl.onvergetelijk.cssinliner') !== FALSE) {
+        $is_ozk_mail    = TRUE;
+        $detectie_reden = 'Generator meta-tag (nl.onvergetelijk.cssinliner) gevonden';
+    } elseif (strpos($params['html'], 'onvergetelijk.nl') !== FALSE && in_array($context, ['api', 'messageTemplate'])) {
+        $is_ozk_mail    = TRUE;
+        $detectie_reden = 'Brede fallback geactiveerd voor context: ' . $context;
+    }
+
+    if (!$is_ozk_mail) {
+        wachthond($extdebug, 4, "GEEN OZK MAIL GEDETECTEERD, INLINER GESTOPT",  ['context_ontvangen' => $context]);
+        return;
+    }
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.0 UITGAANDE MAIL DETECTIE",     "[MAIL-OUT]");
+    wachthond($extdebug, 2, "########################################################################");
+    
+    wachthond($extdebug, 4, "Hook Getriggerd (alterMailParams)",                        $log_params);
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.1 OZK MAIL GEDETECTEERD",           "[DETECTED]");
+    wachthond($extdebug, 2, "########################################################################");
+    
+    wachthond($extdebug, 4, "Detectie details",                                 ['reden' => $detectie_reden, 'context_ontvangen' => $context]);
+
+    $original_html  = $params['html']   ?? '';
+    $all_css    = '';
 
     try {
-        // Stap A: Externe CSS ophalen
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.2 START CSS OPHALEN & FALLBACKS",   "[FETCHING]");
+        wachthond($extdebug, 2, "########################################################################");
+
+        // Zoek naar externe stylesheets in de brontemplate
         preg_match_all('/<link [^>]*href=["\']([^"\']+\.css[^"\']*)["\'][^>]*>/i', $original_html, $matches);
-        
         if (!empty($matches[1])) {
             foreach ($matches[1] as $css_url) {
                 if (strpos($css_url, '//') === FALSE) {
-                    $css_url = CRM_Utils_System::basePath() . ltrim($css_url, '/');
+                    $css_url    = CRM_Utils_System::basePath() . ltrim($css_url, '/');
                 }
-                $css_content = _cssinliner_fetch_external_css($css_url, $extdebug);
+                $css_content    = _cssinliner_fetch_external_css($css_url);
+
                 if (!empty($css_content)) {
-                    $all_css .= $css_content . "\n";
-                    wachthond($extdebug, 3, "CSS_loaded_from", $css_url);
+                    $all_css    .= $css_content . "\n";
+                    wachthond($extdebug, 4, "--- 1.2.1 CSS OPGEHAALD VIA LINK TAG ---",     ['url' => $css_url, 'bytes' => strlen($css_content)]);
                 }
             }
         }
 
-        // Stap B: Inlining proces
-        $html_utf8      = mb_encode_numericentity($original_html, [0x80, 0x10ffff, 0, 0x1fffff], 'UTF-8');
-        $visual_inliner = CssInliner::fromHtml($html_utf8);
+        // --- FALLBACK ALS API/CRON DE LINK HEEFT GESTRIPT OF GEMIST ---
+        if (empty(trim($all_css))) {
+            wachthond($extdebug, 4, "--- 1.2.2 GEEN CSS IN BRON, START FALLBACK ---",       ['actie' => 'FALLBACK-INIT']);
+
+            $fallback_url   = 'https://www.onvergetelijk.nl/sites/all/modules/civicrm_extensions/custom_civicrm_email.css';
+            $fallback_css   = _cssinliner_fetch_external_css($fallback_url);
+
+            if (!empty($fallback_css)) {
+                $all_css    .= $fallback_css . "\n";
+                wachthond($extdebug, 4, "--- 1.2.3 FALLBACK CSS SUCCESVOL GEBRUIKT ---",    ['bytes' => strlen($fallback_css)]);
+            } else {
+                wachthond($extdebug, 1, "--- 1.2.4 FALLBACK CSS OPHALEN MISLUKT! ---",      "[FOUT]");
+            }
+        }
+
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.3 DOM PREPARATIE VOOR API",     "[DOM-WRAP]");
+        wachthond($extdebug, 2, "########################################################################");
+
+        // --- HTML DOM WRAPPER & SANITISATIE VOOR API ---
+        $safe_html  = $original_html;
+        $is_wrapped = false;
+        
+        wachthond($extdebug, 4, "SAFE_HTML PRE-SANITATION",                     ['bytes' => strlen($safe_html)]);
+
+        // 1. Strip alle corrupte of verdwaalde headers weg voordat we wrappen.
+        $safe_html  = preg_replace('/<head[^>]*>.*?<\/head>/is',    '', $safe_html);
+        $safe_html  = preg_replace('/<meta[^>]*>/i',        '', $safe_html);
+        $safe_html  = preg_replace('/<title[^>]*>.*?<\/title>/is',  '', $safe_html);
+        $safe_html  = preg_replace('/<(\/)?(html|head|body)[^>]*>/i','',    $safe_html);
+        $safe_html  = preg_replace('/<!DOCTYPE[^>]*>/i',        '', $safe_html);
+        
+        $safe_html  = trim($safe_html);
+        
+        // 2. Bouw een waterdicht HTML5 document op voor de parser
+        $safe_html  = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n</head>\n<body>\n" . $safe_html . "\n</body>\n</html>";
+        $is_wrapped = true;
+        
+        wachthond($extdebug, 4, "--- 1.3.1 TIJDELIJKE HTML SCHIL GEBOUWD ---",  ['actie' => 'WRAP_AND_CLEAN', 'bytes' => strlen($safe_html)]);
+        
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.4 START EMOGRIFIER RENDER",     "[RENDER]");
+        wachthond($extdebug, 2, "########################################################################");
+        
+        wachthond($extdebug, 4, "CSS en HTML ingeladen in parser",              ['css_bytes' => strlen($all_css)]);
+        
+        $visual_inliner = CssInliner::fromHtml($safe_html);
 
         if (!empty($all_css)) {
             $visual_inliner->inlineCss($all_css);
         }
+        
+        // Render het volledige document
+        $rendered_html  = $visual_inliner->render();
+        wachthond($extdebug, 4, "--- 1.4.1 HTML GERENDERD DOOR EMOGRIFIER ---", ['bytes_out' => strlen($rendered_html)]);
 
-        $visual_inliner->inlineCss();
-        $rendered_html = $visual_inliner->render();
+        // Sloop de tijdelijke schil er weer netjes af
+        if ($is_wrapped) {
+            preg_match("/<body[^>]*>(.*?)<\/body>/is", $rendered_html, $body_matches);
+            if (!empty($body_matches[1])) {
+                $rendered_html  = trim($body_matches[1]);
+                wachthond($extdebug, 4, "--- 1.4.2 TIJDELIJKE HTML SCHIL WEER VERWIJDERD ---",  ['actie' => 'UNWRAP', 'bytes' => strlen($rendered_html)]);
+            } else {
+                wachthond($extdebug, 3, "--- 1.4.3 FOUT BIJ UNWRAPPEN VAN BODY TAG ---",    "[ERROR]");
+            }
+        }
 
-        // Stap C: Validatie & Cleanup
-        // We geven het onderwerp mee voor de <title> tag
-        $params['html'] = _cssinliner_cleanup_html($rendered_html, $params['subject'] ?? 'Onvergetelijke Zomerkampen');
+        // Strip witruimte-artefacten vóór een site-logo div.
+        // 1. Lege <p><br></p> of kale <br> direct voor de logo-div verwijderen.
+        // 2. margin-bottom van de <p> direct vóór de logo-div op 0 zetten (anders geeft die p
+        //    alsnog 15px ruimte boven het logo).
+        $logo_div = '(<div\b[^>]*\bclass="[^"]*\bsite-logo\b[^"]*")';
+        // Trailing <br> aan het einde van de groet-div vóór logo → weghalen (geeft anders extra hoogte)
+        $rendered_html = preg_replace('/<br\s*\/?>\s*(<\/div>\s*)' . $logo_div . '/i', '$1$2', $rendered_html);
+        $rendered_html = preg_replace('/<p[^>]*>\s*<br\s*\/?>\s*<\/p>\s*' . $logo_div . '/i', '$1', $rendered_html);
+        $rendered_html = preg_replace('/<br\s*\/?>\s*'                     . $logo_div . '/i', '$1', $rendered_html);
 
-        $summary = [
-            'ontvanger'    => $params['to_email']   ?? 'onbekend',
-            'grootte_voor' => strlen($original_html) . ' bytes',
-            'grootte_na'   => strlen($params['html']) . ' bytes',
-        ];
-        wachthond($extdebug, 1, 'VERWERKING VOLTOOID', $summary);
+        $logo_pos = strpos($rendered_html, '<div class="site-logo"');
+        if ($logo_pos !== false) {
+            $before    = substr($rendered_html, 0, $logo_pos);
+            $p_end     = strrpos($before, '</p>');
+            if ($p_end !== false) {
+                $p_start = strrpos(substr($before, 0, $p_end), '<p ');
+                if ($p_start !== false) {
+                    $p_html  = substr($rendered_html, $p_start, $p_end - $p_start + 4);
+                    $p_fixed = preg_replace('/\bmargin-bottom:\s*\d+px\b/i', 'margin-bottom: 0px', $p_html);
+                    $rendered_html = substr($rendered_html, 0, $p_start) . $p_fixed . substr($rendered_html, $p_start + strlen($p_html));
+                }
+            }
+        }
+
+        _cssinliner_analyze_templates($original_html, $rendered_html);
+
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.5 START FINALE CLEANUP",        "[CLEANUP-INIT]");
+        wachthond($extdebug, 2, "########################################################################");
+        
+        $params['html'] = _cssinliner_cleanup_html($rendered_html, $params['subject'] ?? 'Onvergetelijke Zomerkampen', TRUE);
 
     } catch (\Exception $e) {
-        wachthond($extdebug, 1, "CRITICAL ERROR: " . $e->getMessage(), "[ERROR]");
+        wachthond($extdebug, 1, "CRITICAL ERROR TIJDENS MAIL PARSING: " . $e->getMessage(),     "[ERROR]");
     }
-
-    wachthond($extdebug, 1, "### CSSINLINER",                                                "[EINDE]");
-    wachthond($extdebug, 2, "########################################################################");
 }
 
 /**
- * V2.4.7: Garandeert 100% W3C compliance en Outlook-compatibiliteit.
- * - Herstelt gebroken /ozkimages/ paden met volledige host-URL.
- * - Dicht het 'alt-tekst lek' door attributen strikt binnen tags te plaatsen.
- * - Forceert een schone HTML5 schil met taal- en meta-data.
+ * HTML opschonen en CiviCRM-vervuiling verwijderen
  */
-function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen') {
+function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', $is_final_send = FALSE) {
+    $extdebug   = 'cssinliner';
+    $stats      = [];
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [CLEANUP] - 1.0 HTML OPSCHONING EN FIXES START",        "[CLEANUP]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    $log_params = [
+        'is_final_send' => $is_final_send   ? 'JA' : 'NEE',
+        'bytes_in'  => strlen($html)
+    ];
+    
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [CLEANUP] - 1.1 START REGEX STRIPPEN & FIXES",      "[REGEX-FIX]");
+    wachthond($extdebug, 2, "########################################################################");
+    
+    wachthond($extdebug, 4, "Parameters voor cleanup",                          $log_params);
+
+    // 0. Strip PHP-foutmeldingen (Deprecated/Warning/Notice) die door display_errors in de HTML zijn
+    //    terechtgekomen, bijv. uit de Smarty Math.php plugin bij null-waarden zonder |default:0.
+    $html = preg_replace(
+        '/<br\s*\/?>\s*\n?<b>(?:Deprecated|Warning|Notice|Fatal error|Parse error)<\/b>\s*:.*?<br\s*\/?>/s',
+        '',
+        $html,
+        -1,
+        $stats['php_foutmeldingen_gestript']
+    );
 
     // 1. Verwijder HTML comments volledig
-    $html = preg_replace('//', '', $html);
+    $html       = preg_replace('//is', '', $html, -1, $stats['html_comments_verwijderd']);
 
-    // 2. Ruim stray tekst op van eerdere foutieve pogingen (zoals "> alt=""")
-    $html = str_replace('> alt=""', '>', $html);
+    // 2. Ruim stray tekst op van eerdere foutieve pogingen
+    $html       = str_replace('> alt=""', '>', $html, $stats['stray_alt_tekst_verwijderd']);
 
-    // 3. FIX: Herstel image-paden en verwijder lege mappen
-    $config = CRM_Core_Config::singleton();
-    $base_url = rtrim($config->userFrameworkBaseURL, '/'); 
-    
-    // Verwijder img tags die alleen naar de map /ozkimages/ wijzen zonder bestand
-    $html = preg_replace('/<img[^>]+src=["\']([^"\']+\/ozkimages\/)["\']([^>]*)>/i', '', $html);
+    wachthond($extdebug, 4, "--- 1.1.1 COMMENTS & STRAY TEKST VERWIJDERD ---",  ['acties' => ($stats['html_comments_verwijderd'] ?? 0) + ($stats['stray_alt_tekst_verwijderd'] ?? 0)]);
 
-    // Herstel overgebleven relatieve paden naar absolute URL's
-    $html = preg_replace_callback('/<img([^>]+)src=["\']([^"\']+)["\']([^>]*)>/i', function($matches) use ($base_url) {
-        $src = $matches[2];
-        if (!preg_match('/^https?:\/\//i', $src)) {
-            $src = $base_url . '/' . ltrim($src, '/');
-        }
-        return "<img{$matches[1]}src=\"{$src}\"{$matches[3]}>";
-    }, $html);
-
-    // 4. FIX: Voeg alt="" toe BINNEN de img tag (callback voorkomt lekken)
-    $html = preg_replace_callback('/<img(?![^>]*\balt=)([^>]+)>/i', function($m) {
-        return '<img alt="" ' . $m[1] . '>';
-    }, $html);
-
-    // 5. Verwijder stray tags uit de body (link, meta)
-    $html = preg_replace('/<link[^>]*>/i', '', $html);
-    $html = preg_replace('/<meta http-equiv="Content-Type"[^>]*>/i', '', $html);
-    
-    // 6. Verwijder lege tags (3 iteraties voor nesting)
-    $pattern = '/<(p|div|span|b|i)>\s*(&nbsp;|\s)*\s*<\/\1>/i';
-    for ($i = 0; $i < 3; $i++) {
-        $html = preg_replace($pattern, '', $html);
+    // 2b. Smarty-template reparaties (alleen bij opslaan — bij render zijn Smarty-tags al verwerkt)
+    if (!$is_final_send) {
+        // ISOLATIE: strip <p> rondom {crmScope} block-tags
+        $html = preg_replace('/<p>\s*\{crmScope\s+extensionKey=""\}\s*<\/p>/i', '{crmScope extensionKey=""}', $html);
+        $html = preg_replace('/<p>\s*\{\/crmScope\}\s*<\/p>/i', '{/crmScope}', $html);
+        // LOGICA: strip <p> rondom {/if} condities
+        $html = preg_replace('/<p>\s*\{\/if\s*\}\s*<\/p>/i', '', $html);
+        $html = preg_replace('/<p>\s*\{\/if\}\s*<\/p>/i', '{/if}', $html);
+        $html = str_replace('<p>{/if}</p>', '{/if}', $html);
+        $html = preg_replace('/\{\/if\}\s*<p>/i', '<p>', $html);
+        // SYNTAX: herstel spaties binnen Smarty-tags
+        $html = preg_replace('/\{\s*\/if\s*\}/i', '{/if}', $html);
+        $html = preg_replace('/\{\s*\/capture\s*\}/i', '{/capture}', $html);
+        $html = preg_replace('/\{\s*\/assign\s*\}/i', '{/assign}', $html);
+        $html = preg_replace('/var="user_fietsevent"\s*\}\s*value=/i', 'var="user_fietsevent" value=', $html);
+        // ENTITEIT: vertaal HTML-entiteiten terug naar logische operatoren in Smarty-context
+        $html = str_replace(' &gt; ', ' > ', $html);
+        $html = str_replace(' &lt; ', ' < ', $html);
+        $html = str_replace(' &amp;&amp; ', ' && ', $html);
+        // OPERATOR: forceer UPPERCASE AND/OR binnen {if} condities
+        $html = preg_replace_callback('/\{if\s+(.*?)\}/i', function($m) {
+            $c = preg_replace('/\b(and)\b/i', 'AND', $m[1]);
+            $c = preg_replace('/\b(or)\b/i', 'OR', $c);
+            return '{if ' . $c . '}';
+        }, $html);
     }
 
+    $config     = CRM_Core_Config::singleton();
+    $base_url   = rtrim($config->userFrameworkBaseURL, '/');
+
+    // 3a. URL-prefix stripper: verwijder alles vóór Smarty URL-tokens in attribuutwaarden.
+    // Zodra een van deze tokens tussen {} staat, begint de uiteindelijke URL altijd met https://
+    // dus mag er niets voor staan — ongeacht wat er staat (https://domein/, appeltaart, wat dan ook).
+    // [^'"()]* stopt aan de attribuutgrens zodat we nooit buiten het attribuut springen.
+    $smarty_url_vars= 'ozkweburl|ozkimgurl|loginrequest|loginlink|ozkstyles|ozkaccount|hlfimgurl';
+    $html       = preg_replace(
+        '/(["\'\(])[^\'"\(\)\{\}]*(\{\$(?:' . $smarty_url_vars . ')[^}]*\})/i',
+        '$1$2',
+        $html,
+        -1,
+        $stats['domein_prefix_voor_smarty_var_verwijderd']
+    );
+
+    // 3b. Block-token normalisatie: zorg dat block-level site tokens in een eigen <div> zitten
+    // zodat ze in de editor op een eigen regel staan en correct als blok renderen.
+    // - <p>{token}</p>        → <div>{token}</div>
+    // - <br>{token}           → <div>{token}</div>   (losse br vóór token)
+    // - {token} zonder wrapper → <div>{token}</div>  (wanneer niet al in <div>)
+    $block_tokens = 'site\.smarty_logo|site\.smarty_intake_tips|site\.smarty_checkleid|site\.smarty_checkdeel|site\.smarty_checktopkamp|site\.smarty_loginrequest_deel|site\.smarty_loginrequest_leid|site\.smarty_fietshuur|site\.smarty_fotos_hl|site\.smarty_fotos_hl_tel';
+    // Strip <p> wrapper → <div>
+    $html = preg_replace('/<p[^>]*>\s*(\{(?:' . $block_tokens . ')\})\s*<\/p>/i', '<div>$1</div>', $html);
+    // Strip <br> vóór token → <div>
+    $html = preg_replace('/<br\s*\/?>\s*(\{(?:' . $block_tokens . ')\})/i', '<div>$1</div>', $html);
+    // Wrap naakte tokens (niet voorafgegaan door <div>) in <div>
+    $html = preg_replace('/(?<!<div>)(\{(?:' . $block_tokens . ')\})(?!\s*<\/div>)/i', '<div>$1</div>', $html);
+    // Dedup: voorkom dubbel geneste <div><div>token</div></div>
+    $html = preg_replace('/<div>\s*<div>(\{(?:' . $block_tokens . ')\})<\/div>\s*<\/div>/i', '<div>$1</div>', $html);
+
+    // 3c. Witruimte ROND {site.smarty_logo} opruimen
+    // VÓÓR logo: trailing <br/> aan het einde van de groet-div → weghalen (veroorzaakt extra hoogte)
+    $html = preg_replace('/(<br\s*\/?>\s*)(<\/div>\s*<div>\{site\.smarty_logo\}<\/div>)/si',                 '$2',   $html);
+    // VÓÓR logo: <br> of <p><br/></p> direct vóór de logo-div → weghalen
+    $html = preg_replace('/(<br\s*\/?>\s*)(<div>\{site\.smarty_logo\}<\/div>)/si',                           '$2',   $html);
+    $html = preg_replace('/(<p>\s*<br\s*\/?>\s*<\/p>\s*)(<div>\{site\.smarty_logo\}<\/div>)/si',             '$2',   $html);
+    // NA logo: <br>, lege <p></p>, gebroken <div><p></div>, of stray </p> direct ná logo-div → weghalen
+    $html = preg_replace('/(<div>\{site\.smarty_logo\}<\/div>)\s*<br\s*\/?>\r?\n?/i',                        '$1',   $html, -1, $stats['logo_br_na_logo_verwijderd']);
+    $html = preg_replace('/(<div>\{site\.smarty_logo\}<\/div>)\s*<(?:p|div)>\s*(?:<br\s*\/?>)?\s*<\/(?:p|div)>/si', '$1', $html);
+    $html = str_replace('<div>{site.smarty_logo}</div></p>', '<div>{site.smarty_logo}</div>',                 $html);
+    // Oud patroon (zonder div-wrapper) — fallback
+    $html = preg_replace('/(\{site\.smarty_logo\})(\s*<p[^>]*>)\s*<br\s*\/>/i',        '$1$2',  $html, -1, $stats['logo_br_in_p_na_logo_verwijderd']);
+    $html = preg_replace('/(\{site\.smarty_logo\})\s*<p>\s*(<\/div>)/i',               '$1$2',  $html, -1, $stats['logo_lege_p_na_logo_verwijderd']);
+
+    $html       = preg_replace('/<img[^>]+src=["\']([^"\']+\/ozkimages\/)["\']([^>]*)>/i', '', $html, -1, $stats['loze_img_tags_verwijderd']);
+
+    $html       = preg_replace_callback('/<img([^>]+)src=["\'](https?:\/\/[^\'"]+)(https?:\/\/[^\'"]+)["\']([^>]*)>/i', function($matches) {
+        return "<img{$matches[1]}src=\"{$matches[3]}\"{$matches[4]}>";
+    }, $html, -1, $stats['dubbele_url_prefixes_hersteld']);
+
+    $html       = preg_replace_callback('/<img([^>]+)src=["\']([^"\']+)["\']([^>]*)>/i', function($matches) use ($base_url) {
+        $src    = $matches[2];
+        if (strpos($src, '{$') !== false) {
+            return $matches[0];
+        }
+        if (!preg_match('/^https?:\/\//i', $src)) {
+            $src    = $base_url . '/' . ltrim($src, '/');
+        }
+        return "<img{$matches[1]}src=\"{$src}\"{$matches[3]}>";
+    }, $html, -1, $stats['img_paden_absoluut_gemaakt']);
+
+    wachthond($extdebug, 4, "--- 1.1.2 URLS & AFBEELDINGSPADEN HERSTELD ---",   ['absoluut_gemaakt' => $stats['img_paden_absoluut_gemaakt'] ?? 0]);
+
+    // 4. Voeg alt="" toe BINNEN de img tag
+    $html       = preg_replace_callback('/<img(?![^>]*\balt=)([^>]+)>/i', function($m) {
+        return '<img alt="" ' . $m[1] . '>';
+    }, $html, -1, $stats['ontbrekende_alt_attributen_geinjecteerd']);
+
+    // 5. Verwijder stray head-tags uit de body (Alleen bij finale verzending)
+    if ($is_final_send) {
+        $html   = preg_replace('/<link[^>]*>/i',            '', $html, -1, $cnt_link);
+        $html   = preg_replace('/<meta http-equiv="Content-Type"[^>]*>/i','', $html, -1, $cnt_meta);
+        
+        if ($cnt_link > 0 || $cnt_meta > 0) {
+            wachthond($extdebug, 4, "--- 1.1.3 STRAY HEAD TAGS VERWIJDERD ---", ['links' => $cnt_link, 'metas' => $cnt_meta]);
+        }
+    }
+    
+    // 5a. Voeg witruimte (lege regel) toe boven "Met vriendelijke groet" als die direct na </p> staat.
+    //     Zonder deze regel plakt de aanhef visueel vast aan de voorgaande paragraaf.
+    $html = preg_replace(
+        '/(<\/p>)(<div[^>]*>(?:met|Met) vriendelijke groet)/i',
+        '$1<br>$2',
+        $html
+    );
+
+    // 5b. Verwijder <big> wrapper-tags (de inhoud blijft behouden).
+    //     <big> vergroot de tekst ten opzichte van de omliggende tekst — onwenselijk in e-mail.
+    $html = preg_replace('/<big>(.*?)<\/big>/is', '$1', $html, -1, $stats['big_tags_verwijderd']);
+
+    // 5c-pre. Vervang class="testbox" door inline style zodat de CSS-definitie niet in de mail hoeft.
+    //     De .testbox regel is verwijderd uit de externe CSS; stijl wordt nu direct meegegeven.
+    $html = preg_replace_callback('/<(p|div|span)([^>]*)\bclass="([^"]*\btestbox\b[^"]*)"([^>]*)>/i', function($m) {
+        $otherClasses = trim(preg_replace('/\btestbox\b/', '', $m[3]));
+        $classAttr    = $otherClasses ? ' class="' . $otherClasses . '"' : '';
+        return '<' . $m[1] . $m[2] . $classAttr . ' style="background-color:rgb(239,239,239);border:1px solid;padding:5px;"' . $m[4] . '>';
+    }, $html, -1, $stats['testbox_inlined']);
+
+    // 5d. Collapseer dubbele witregels — alle combinaties van <br>, <p>, &nbsp;, \n.
+    //     Iteratief (max 5 passes) zodat gecreëerde combinaties zelf ook worden opgelost.
+    $stats['dubbele_witregels_gecollapseerd'] = 0;
+    for ($pass = 0; $pass < 5; $pass++) {
+        $before = $html;
+        // Lege <p> varianten → weg (lege inhoud, alleen &nbsp; of alleen whitespace)
+        $html = preg_replace('/<p[^>]*>\s*(<br\s*\/?>)?\s*<\/p>/i', '', $html, -1, $c1);
+        // &nbsp;-only <p> → weg
+        $html = preg_replace('/<p[^>]*>\s*(?:&nbsp;|\xc2\xa0)+\s*<\/p>/i', '', $html, -1, $c2);
+        // Opeenvolgende <br> (2+) met eventuele whitespace → één <br />
+        $html = preg_replace('/(?:<br\s*\/?>\s*){2,}/i', '<br />', $html, -1, $c3);
+        // <br> direct NA </p> of direct VOOR <p> (overbodig na/voor block-element)
+        $html = preg_replace('/<\/p>\s*<br\s*\/?>/i', '</p>', $html, -1, $c4);
+        $html = preg_replace('/<br\s*\/?>\s*<p/i', '<p', $html, -1, $c5);
+        // Meerdere lege regels in tekst → max één
+        $html = preg_replace('/\n{3,}/', "\n\n", $html, -1, $c6);
+        $stats['dubbele_witregels_gecollapseerd'] += ($c1 + $c2 + $c3 + $c4 + $c5 + $c6);
+        if ($html === $before) {
+            break;
+        }
+    }
+
+    // 5e. Normaliseer groetsectie: meerdere <p>-tags → <div class="ozk-groet"> met <br /> tussen regels.
+    //     Ook losse <div> of <div style="margin-top..."> met groetformule krijgt de class.
+    //     CSS in custom_civicrm_email.css regelt margin-top en line-height;
+    //     Emogrifier inlinet die klasse naar style-attribuut vóór verzending.
+    $html = preg_replace_callback(
+        '/(<p[^>]*>)((?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet)[^<]*(?:<br\s*\/?>.*?)?<\/p>)((?:\s*<p[^>]*>[^<]*<\/p>)*)/is',
+        function($m) {
+            $inner = preg_replace('/<\/?p[^>]*>/i', '', $m[2]);
+            $rest  = preg_replace('/<p[^>]*>(.*?)<\/p>/is', '<br />$1', $m[3]);
+            $content = trim($inner) . $rest;
+            return '<div class="ozk-groet">' . $content . '</div>';
+        },
+        $html
+    );
+    $html = preg_replace(
+        '/<div(?:\s+style="[^"]*margin-top[^"]*")?>(?=\s*(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet|with\s+kind|regards|groet))/i',
+        '<div class="ozk-groet">',
+        $html
+    );
+    // 5e-D. <div> die een groetformule bevat NA willekeurige inline HTML (links, <p>, <br />, etc.)
+    //       Tempered greedy: (?!<\/?div\b) stopt bij geneste <div>-grenzen zodat nooit over meerdere blokken gesprongen wordt.
+    $html = preg_replace(
+        '/<div>(?=(?:(?!<\/?div\b).)*(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet))/is',
+        '<div class="ozk-groet">',
+        $html
+    );
+    // 5e-E. Bare tekst (geen wrapper) direct vóór {assign var="M61BODY"} of </body>
+    $html = preg_replace_callback(
+        '/(<br\s*\/?>\s*)((?:[^<]|<br\s*\/?>)*?(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet)(?:[^<]|<br\s*\/?>)*?)(\s*<div[^>]*>\{assign\s+var="M61BODY"|<\/body>)/is',
+        function($m) {
+            $content = trim($m[2]);
+            return $m[1] . '<div class="ozk-groet">' . $content . '</div>' . $m[3];
+        },
+        $html
+    );
+    // 5c. Verwijder <strong> direct BINNEN <h3> tags:
+    //     Een heading-tag is al intrinsiek bold — extra <strong> geeft dubbele nadruk.
+    //     Andere opmaak (bijv. <u>) binnen de <strong> wordt bewaard.
+    $html = preg_replace_callback('/<(h[3-6])([^>]*)>(.*?)<\/\1>/is', function($m) {
+        $inner = preg_replace('/<strong>(.*?)<\/strong>/is', '$1', $m[3]);
+        return '<' . $m[1] . $m[2] . '>' . $inner . '</' . $m[1] . '>';
+    }, $html, -1, $stats['strong_in_heading_verwijderd']);
+
+    // 6. Verwijder lege tags algemeen over de complete string
+    // 6a. <div> met alleen whitespace (spatie, tab, newline, &nbsp;) — ook met attributen
+    $html = preg_replace('/<div[^>]*>\s*(?:&nbsp;|\xc2\xa0| )?\s*<\/div>/i', '', $html);
+    // 6b. Algemeen: p, div, span, b, i zonder inhoud
+    $pattern    = '/<(p|div|span|b|i)>\s*(?:&nbsp;|\xc2\xa0|\s)*\s*<\/\1>/i';
+    for ($i = 0; $i < 3; $i++) {
+        $html   = preg_replace($pattern, '', $html, -1, $cnt_empty);
+    }
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [CLEANUP] - 1.2 TOPELEMENT & SCHIL HERSTEL",            "[STRUCTURE]");
+    wachthond($extdebug, 2, "########################################################################");
+
     // 7. Forceer de valide HTML5 schil
-    $html = preg_replace('/<(\/)?(html|head|body)[^>]*>/i', '', $html);
-    $html = preg_replace('/<!DOCTYPE[^>]*>/i', '', $html);
+    $html       = preg_replace('/<(\/)?(html|head|body)[^>]*>/i',   '', $html);
+    $html       = preg_replace('/<!DOCTYPE[^>]*>/i',            '', $html);
+    // 7a. Strip orphaned head-content (meta/title/viewport) die achterblijven na vorige runs
+    $html       = preg_replace('/<meta\s+charset="utf-8">\s*<meta\s+name="generator"\s+content="nl\.onvergetelijk\.cssinliner">\s*<title>.*?<\/title>\s*<meta\s+name="viewport"[^>]*>/is', '', $html);
+
+    // 7b. TOPELEMENT REGEX FIX: Wist elke lege paragraaf die zich vóór de aanhef bevindt
+    $html       = trim($html);
+    
+    if (preg_match('/(Hallo|Beste|Geachte|Hoi|Dear)/i', $html, $anker_matches, PREG_OFFSET_CAPTURE)) {
+        $anker_pos  = $anker_matches[0][1];
+        $header_part    = substr($html, 0, $anker_pos);
+        $body_part  = substr($html, $anker_pos);
+        
+        $header_part    = preg_replace('/<p[^>]*>\s*(?:&nbsp;|\s)*\s*<\/p>/i', '', $header_part, -1, $stats['top_spook_paragrafen_gestript']);
+        $html       = $header_part . $body_part;
+        
+        wachthond($extdebug, 4, "--- 1.2.1 SPOOKPARAGRAFEN VOOR AANHEF GEWIST ---",         ['aantal' => $stats['top_spook_paragrafen_gestript'] ?? 0]);
+    }
 
     $clean_html = "<!DOCTYPE html>\n";
     $clean_html .= "<html lang=\"nl\">\n";
     $clean_html .= "<head>\n";
     $clean_html .= "    <meta charset=\"utf-8\">\n";
-    $clean_html .= "    <title>" . htmlspecialchars($title) . "</title>\n";
+    $clean_html .= "    <meta name=\"generator\" content=\"nl.onvergetelijk.cssinliner\">\n";
+    $safe_title = preg_replace('/\{[^}]*\}/', '', $title); // strip Smarty-tags zodat {$smarty.now|date_format:&quot;...&quot;} niet crasht
+    $clean_html .= "    <title>" . htmlspecialchars($safe_title) . "</title>\n";
     $clean_html .= "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
     $clean_html .= "</head>\n";
     $clean_html .= "<body style=\"margin:0;padding:0;font-family:Arial,sans-serif;\">\n";
@@ -159,33 +542,286 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen') 
     $clean_html .= "</body>\n";
     $clean_html .= "</html>";
 
-    // 8. Trek de HTML visueel strak (geen loze enters tussen tags)
-    $clean_html = preg_replace('/>[\s\n\r]+</', '><', $clean_html);
+    // 8. Trek de HTML visueel strak
+    $clean_html = preg_replace('/>[\s\n\r]+</', '><', $clean_html, -1, $stats['witregels_tussen_tags_geminimaliseerd']);
+
+    $stats      = array_filter($stats, function($val) { return $val > 0; });
+    
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [CLEANUP] - 1.3 CLEANUP AFGEROND (STATISTIEKEN)",       "[STATS]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    if (!empty($stats)) {
+        wachthond($extdebug, 4, "Resultaten (Aantal acties)",                       $stats);
+    }
 
     return $clean_html;
 }
 
 /**
- * Fetcher voor externe CSS bestanden met statische cache.
+ * Fetcher voor externe CSS (CLI / CRON COMPATIBEL)
  */
-function _cssinliner_fetch_external_css($url, $extdebug) {
+function _cssinliner_fetch_external_css($url) {
+    static $css_cache   = [];
+    $extdebug       = 'cssinliner';
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [FETCHCSS] - 1.0 EXTERNE CSS OPHALEN",          "[FETCH]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    if (isset($css_cache[$url])) {
+        wachthond($extdebug, 2, "########################################################################");
+        wachthond($extdebug, 1, "### CSSINLINER [FETCHCSS] - 1.1 CSS CACHE CHECK",          "[CACHE]");
+        wachthond($extdebug, 2, "########################################################################");
+        
+        wachthond($extdebug, 4, "CSS gevonden in statische cache",                  ['url' => $url]);
+        return $css_cache[$url];
+    }
     
-    static $css_cache = [];
-    if (isset($css_cache[$url])) return $css_cache[$url];
+    $content    = FALSE;
+    $parsed_url = parse_url($url);
 
-    $ctx = stream_context_create(['http' => ['timeout' => 5]]);
-    $content = @file_get_contents($url, FALSE, $ctx);
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [FETCHCSS] - 1.2 LOKALE BESTANDEN CHECK",           "[LOCAL]");
+    wachthond($extdebug, 2, "########################################################################");
 
-    if ($content === FALSE) {
-        return '';
+    // Bepaal op een CLI-veilige manier wat de document root is
+    $doc_root   = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    
+    if (empty($doc_root) && defined('DRUPAL_ROOT')) {
+        $doc_root   = DRUPAL_ROOT;
+    }
+    if (empty($doc_root) && class_exists('Civi')) {
+        $doc_root   = rtrim(\Civi::paths()->get('[cms.root]/.'), '/');
     }
 
-    $css_cache[$url] = strip_tags($content);
+    if (isset($parsed_url['path']) && !empty($doc_root)) {
+        $local_path = rtrim($doc_root, '/') . '/' . ltrim($parsed_url['path'], '/');
+        $local_path = preg_replace('#/+#', '/', $local_path);
+        
+        if (file_exists($local_path)) {
+            $content    = @file_get_contents($local_path);
+            wachthond($extdebug, 4, "--- 1.2.1 LOKAAL BESTAND OPGEHAALD ---",        ['pad' => $local_path, 'bytes' => strlen((string)$content)]);
+        } else {
+            wachthond($extdebug, 4, "--- 1.2.2 LOKAAL BESTAND NIET GEVONDEN ---",    ['pad' => $local_path]);
+        }
+    }
+    
+    // EXTRA FALLBACK: Zoek direct via de extensie directory fallback
+    if ($content === FALSE || trim($content) === '') {
+        $ext_dir_path = dirname(__DIR__) . '/custom_civicrm_email.css';
+        if (file_exists($ext_dir_path)) {
+            $content = @file_get_contents($ext_dir_path);
+            wachthond($extdebug, 4, "--- 1.2.3 LOKAAL BESTAND VIA EXTENSIEMAP OPGEHAALD ---",   ['pad' => $ext_dir_path, 'bytes' => strlen((string)$content)]);
+        }
+    }
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [FETCHCSS] - 1.3 START CURL FALLBACK",          "[CURL]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    if ($content === FALSE || trim($content) === '') {
+        wachthond($extdebug, 4, "cURL fallback geactiveerd",                        ['url' => $url]);
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL,       $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST,false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER,false);
+        curl_setopt($ch, CURLOPT_TIMEOUT,   5);
+        
+        $content    = curl_exec($ch);
+        $curl_info  = curl_getinfo($ch);
+        curl_close($ch);
+
+        wachthond($extdebug, 4, "--- 1.3.1 CURL RESPONSE ONTVANGEN ---",          ['http_code' => $curl_info['http_code'] ?? 'N/A']);
+    }
+    
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [FETCHCSS] - 1.4 CSS OPHALEN AFGEROND",         "[FETCH-DONE]");
+    wachthond($extdebug, 2, "########################################################################");
+
+    if ($content === FALSE || trim($content) === '') {
+        wachthond($extdebug, 3, "CSS Content blijft leeg na alle pogingen",       "[WARN]");
+        return '';
+    }
+    
+    $css_cache[$url]    = strip_tags($content);
     return $css_cache[$url];
+}
+
+/**
+ * Template Analyse
+ */
+function _cssinliner_analyze_templates($html_voor, $html_na) {
+    $extdebug   = 'cssinliner';
+
+    wachthond($extdebug, 2, "########################################################################");
+    wachthond($extdebug, 1, "### CSSINLINER [ANALYZE] - 1.0 TEMPLATE VERGELIJKING",         "[ANALYZE]");
+    wachthond($extdebug, 2, "########################################################################");
+    
+    $count_voor = preg_match_all('/style\s*=\s*["\']([^"\']+)["\']/i', $html_voor, $matches_voor);
+    $count_na   = preg_match_all('/style\s*=\s*["\']([^"\']+)["\']/i', $html_na,   $matches_na);
+    
+    $unieke_styles_voor = array_unique(array_map('trim', $matches_voor[1] ?? []));
+    $unieke_styles_na   = array_unique(array_map('trim', $matches_na[1]   ?? []));
+    $toegevoegde_styles = array_values(array_diff($unieke_styles_na, $unieke_styles_voor));
+
+    $rapport    = [
+        'aantal_styles_in_brontemplate' => $count_voor,
+        'aantal_styles_na_emogrifier'   => $count_na,
+        'verschil_aantal_elementen' => ($count_na - $count_voor),
+        'nieuw_geinjecteerde_regels'    => $toegevoegde_styles,
+    ];
+    
+    wachthond($extdebug, 4, "--- 1.1 TEMPLATE ANALYSE (EMOGRIFIER DIFF RESULTAAT) ---",         $rapport);
+}
+
+/**
+ * civi.token.eval listener (prioriteit -10, vuurt NA SiteTokens bij prioriteit 0).
+ *
+ * Stript ook omringende <p>-tags uit alle site token waarden (CKEditor voegt die toe voor
+ * leesbaarheid; in email-HTML zijn ze ongewenst).
+ * Detecteert site tokens waarvan de body Smarty-variabelen bevat ({$...}, {if}, {foreach} etc.).
+ * Slaat de raw body op in een statische cache en vervangt de token-waarde door een placeholder
+ * die tokenEscapeSmarty() niet aanraakt: ##OZK_SMARTY:naam##
+ */
+function _cssinliner_on_token_eval(\Civi\Token\Event\TokenValueEvent $e): void {
+    $extdebug = 'cssinliner';
+
+    foreach ($e->getRows() as $row) {
+        $rowIdx  = $row->tokenRow;
+        if (empty($row->tokenProcessor->rowValues[$rowIdx]['text/html']['site'])) {
+            continue;
+        }
+        $htmlVals = &$row->tokenProcessor->rowValues[$rowIdx]['text/html']['site'];
+
+        foreach ($htmlVals as $field => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            // Strip omringende <p>-tags die CKEditor toevoegt voor leesbaarheid.
+            // Alleen de tags worden verwijderd, de inhoud blijft intact.
+            $stripped = preg_replace('/<p\b[^>]*>(.*?)<\/p>/is', '$1', $value);
+            if ($stripped !== $value) {
+                $value = trim($stripped);
+                $row->tokenProcessor->rowValues[$rowIdx]['text/html']['site'][$field] = $value;
+                $htmlVals[$field] = $value;
+            }
+            // Bevat de body Smarty-code? Check op {$ of {if of {foreach of {assign
+            if (preg_match('/\{\$|\{if\b|\{foreach\b|\{assign\b|\{capture\b/i', $value)) {
+                // Sla raw body op in statische cache (key = veldnaam).
+                // NB: CiviCRM tokens ({participant.x} etc.) in deze body worden NIET hier
+                // opgelost — dat gebeurt in _cssinliner_on_token_render via een mini-
+                // TokenProcessor nadat de Smarty body is geïnjecteerd.
+                $cache = &_cssinliner_smarty_token_cache();
+                $cache[$field] = $value;
+                // Vervang door placeholder zonder accolades → tokenEscapeSmarty laat hem met rust
+                $row->tokenProcessor->rowValues[$rowIdx]['text/html']['site'][$field]
+                    = '##OZK_SMARTY:' . $field . '##';
+                wachthond($extdebug, 3,
+                    "### CSSINLINER [TOKEN-EVAL] - site.$field bevat Smarty → placeholder gezet",
+                    ['bytes' => strlen($value)]
+                );
+            }
+        }
+    }
+}
+
+/**
+ * civi.token.render listener (prioriteit 10, vuurt VOOR TokenCompatSubscriber bij prioriteit 0).
+ *
+ * Stap 1: Vervangt ##OZK_SMARTY:naam## placeholders door de raw Smarty body uit de cache.
+ * Stap 2: Verwerkt CiviCRM tokens ({participant.x}, {contact.x}, {event.x}) die in de
+ *         Smarty bodies staan maar NIET door de standaard evaluators zijn gezien (die scannen
+ *         alleen de originele template-tekst, niet de site-token bodies). Hiervoor wordt een
+ *         tijdelijke TokenProcessor aangemaakt met dezelfde context.
+ *         Recursie-guard voorkomt dat dit zichzelf herhaaldelijk triggert.
+ */
+function _cssinliner_on_token_render(\Civi\Token\Event\TokenRenderEvent $e): void {
+    $extdebug = 'cssinliner';
+    $cache = _cssinliner_smarty_token_cache();
+
+    if (empty($cache) || strpos($e->string, '##OZK_SMARTY:') === FALSE) {
+        return;
+    }
+
+    // Stap 1: Injecteer alle Smarty bodies
+    foreach ($cache as $field => $rawBody) {
+        $placeholder = '##OZK_SMARTY:' . $field . '##';
+        if (strpos($e->string, $placeholder) !== FALSE) {
+            $e->string = str_replace($placeholder, $rawBody, $e->string);
+            wachthond($extdebug, 3,
+                "### CSSINLINER [TOKEN-RENDER] - placeholder site.$field vervangen door raw Smarty body",
+                ['bytes' => strlen($rawBody)]
+            );
+        }
+    }
+
+    // Stap 2: Los nu de CiviCRM tokens op die in de geïnjecteerde bodies stonden.
+    // De originele eval-fase heeft die tokens overgeslagen (ze stonden niet in getMessageTokens).
+    // Gebruik een tijdelijke TokenProcessor met dezelfde context en smarty=FALSE (Smarty draait
+    // daarna op prioriteit 0 via TokenCompatSubscriber).
+    static $reprocessing = FALSE;
+    if ($reprocessing) {
+        return;  // Recursie-guard
+    }
+
+    // Check of er nog CiviCRM tokens in de string staan die verwerkt moeten worden
+    if (!preg_match('/\{(?:participant|contact|event|activity)\.[a-zA-Z_0-9.:]+\}/', $e->string)) {
+        return;
+    }
+
+    $reprocessing = TRUE;
+    try {
+        $ctx = (array) ($e->row->context ?? []);
+        // Smarty NIET uitvoeren in deze pass — dat doen we straks in TokenCompatSubscriber (prio 0)
+        $ctx['smarty'] = FALSE;
+
+        $tp = new \Civi\Token\TokenProcessor(\Civi::dispatcher(), $ctx);
+        $tp->addMessage('body', $e->string, 'text/html');
+        $tp->addRow()->context($ctx);
+        $tp->evaluate();
+        foreach ($tp->getRows() as $tpRow) {
+            $e->string = $tp->render('body', $tpRow);
+        }
+        wachthond($extdebug, 3,
+            "### CSSINLINER [TOKEN-RENDER] - CiviCRM tokens in Smarty bodies verwerkt via mini-TokenProcessor"
+        );
+    } catch (\Throwable $ex) {
+        wachthond($extdebug, 1,
+            "### CSSINLINER [TOKEN-RENDER] - FOUT bij token-herverwerking: " . $ex->getMessage()
+        );
+    } finally {
+        $reprocessing = FALSE;
+    }
+}
+
+/**
+ * Statische cache voor raw Smarty-bodies van site tokens.
+ * Retourneert een referentie zodat aanroepers kunnen schrijven.
+ */
+function &_cssinliner_smarty_token_cache(): array {
+    static $cache = [];
+    return $cache;
 }
 
 function cssinliner_civicrm_config(&$config) {
     if (function_exists('_cssinliner_civix_civicrm_config')) {
         _cssinliner_civix_civicrm_config($config);
     }
+
+    // Eénmalig registreren (config-hook kan meerdere keren vuren).
+    static $registered = FALSE;
+    if ($registered) {
+        return;
+    }
+    $registered = TRUE;
+
+    // Registreer de twee token-event listeners voor native site token Smarty-rendering.
+    // eval prioriteit -10: vuurt NA SiteTokens (0), zodat hun waarden al gezet zijn.
+    // render prioriteit 10: vuurt VOOR TokenCompatSubscriber (0), zodat placeholders
+    //   vervangen worden vóór parseOneOffStringThroughSmarty() draait.
+    \Civi::dispatcher()->addListener('civi.token.eval',   '_cssinliner_on_token_eval',   -10);
+    \Civi::dispatcher()->addListener('civi.token.render', '_cssinliner_on_token_render',  10);
 }
