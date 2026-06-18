@@ -309,11 +309,13 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
         // ISOLATIE: strip <p> rondom {crmScope} block-tags
         $html = preg_replace('/<p>\s*\{crmScope\s+extensionKey=""\}\s*<\/p>/i', '{crmScope extensionKey=""}', $html);
         $html = preg_replace('/<p>\s*\{\/crmScope\}\s*<\/p>/i', '{/crmScope}', $html);
-        // LOGICA: strip <p> rondom {/if} condities
-        $html = preg_replace('/<p>\s*\{\/if\s*\}\s*<\/p>/i', '', $html);
+        // LOGICA: UNWRAP <p> rondom een losse {/if} (editor-artefact) — maar behoud de {/if}.
+        // LET OP: nooit de {/if} zelf droppen. {/if}<p> is volkomen geldige Smarty (conditie sluiten,
+        // dan nieuwe paragraaf) en mag NIET aangeraakt worden — anders raken self-contained {if}-blokken
+        // ongesloten en wordt het template onrenderbaar (zie cssinliner-ifstrip-regressie juni 2026).
+        $html = preg_replace('/<p>\s*\{\/if\s*\}\s*<\/p>/i', '{/if}', $html);
         $html = preg_replace('/<p>\s*\{\/if\}\s*<\/p>/i', '{/if}', $html);
         $html = str_replace('<p>{/if}</p>', '{/if}', $html);
-        $html = preg_replace('/\{\/if\}\s*<p>/i', '<p>', $html);
         // SYNTAX: herstel spaties binnen Smarty-tags
         $html = preg_replace('/\{\s*\/if\s*\}/i', '{/if}', $html);
         $html = preg_replace('/\{\s*\/capture\s*\}/i', '{/capture}', $html);
