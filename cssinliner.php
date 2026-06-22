@@ -218,9 +218,22 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
 
         // Sloop de tijdelijke schil er weer netjes af
         if ($is_wrapped) {
+            // Behoud een eventueel <style>-blok dat Emogrifier in de <head> achterliet:
+            // dat bevat de ON-inlinebare regels (m.n. @media voor responsive opmaak, bv.
+            // desktop-only line-height). Email-clients lezen <style> ook in de body, dus we
+            // zetten het vóór de body-inhoud terug — anders gooit de body-extractie hieronder
+            // die responsive regels weg.
+            $preserve_style = '';
+            if (preg_match('/<style\b[^>]*>(.*?)<\/style>/is', $rendered_html, $style_matches)) {
+                $style_inner = trim($style_matches[1]);
+                if ($style_inner !== '') {
+                    $preserve_style = "<style type=\"text/css\">" . $style_inner . "</style>\n";
+                    wachthond($extdebug, 4, "--- 1.4.1b RESPONSIVE <style> BEHOUDEN ---",   ['bytes' => strlen($style_inner)]);
+                }
+            }
             preg_match("/<body[^>]*>(.*?)<\/body>/is", $rendered_html, $body_matches);
             if (!empty($body_matches[1])) {
-                $rendered_html  = trim($body_matches[1]);
+                $rendered_html  = $preserve_style . trim($body_matches[1]);
                 wachthond($extdebug, 4, "--- 1.4.2 TIJDELIJKE HTML SCHIL WEER VERWIJDERD ---",  ['actie' => 'UNWRAP', 'bytes' => strlen($rendered_html)]);
             } else {
                 wachthond($extdebug, 3, "--- 1.4.3 FOUT BIJ UNWRAPPEN VAN BODY TAG ---",    "[ERROR]");
@@ -740,23 +753,215 @@ function _cssinliner_on_token_eval(\Civi\Token\Event\TokenValueEvent $e): void {
  *         tijdelijke TokenProcessor aangemaakt met dezelfde context.
  *         Recursie-guard voorkomt dat dit zichzelf herhaaldelijk triggert.
  */
+/**
+ * Curated capture-blok dat vóór een text/plain-onderwerp wordt geplakt zodat de meest
+ * gebruikte camp-variabelen ({$user_kampkort} etc.) ook in het EMAIL-ONDERWERP bruikbaar
+ * zijn — net als in de body via de smarty_header. Bevat uitsluitend {capture}/{assign}
+ * (geen output). De CiviCRM-tokens hierin worden door Stap 2 in _cssinliner_on_token_render()
+ * geresolved; daarna draait Smarty (prio 0) en zet de {$...}-vars.
+ *
+ * ANTI-DRIFT: de keten-vars (kampkort/kampnaam/kamptype/kampjaar/voornaam) worden RUNTIME
+ * 1-op-1 uit de smarty_header geëxtraheerd (zie _cssinliner_extract_header_vars), zodat ze
+ * automatisch meebewegen als de header-keten wijzigt. De overige vars staan niet 1-op-1 in
+ * de header (groep* zit in een {if}-blok; displayname/eventstart/smartynow bestaan niet als
+ * header-var) en worden hier expliciet gedefinieerd. Faalt de extractie, dan valt 't blok
+ * terug op de volledige hardcoded versie (_cssinliner_subjectvars_fallback) zodat onderwerpen
+ * nóóit breken. Resultaat wordt per request gecachet.
+ */
+function _cssinliner_subjectvars(): string {
+    static $block = NULL;
+    if ($block !== NULL) {
+        return $block;
+    }
+
+    // Auto-sync uit de header: deze targets + hun {capture}-deps worden geëxtraheerd.
+    $targets = ['user_kampkort', 'user_kampnaam', 'user_kamptype', 'user_kampjaar', 'user_voornaam'];
+
+    // Expliciet (niet 1-op-1 uit de header te halen):
+    //  - groep* staan in de header in een {if}/{elseif}-blok -> hier met dezelfde part->jaar fallback;
+    //  - user_displayname / user_eventstart(_ts) / user_smartynow bestaan niet als header-var.
+    $extra =
+        '{capture assign="part_groepskleur"}{participant.custom_1766}{/capture}' .
+        '{capture assign="jaar_groepskleur"}{contact.custom_1228}{/capture}' .
+        '{assign var="user_groepskleur" value=$part_groepskleur|default:$jaar_groepskleur|default:""}' .
+        '{capture assign="part_groepsletter"}{participant.custom_1765}{/capture}' .
+        '{capture assign="jaar_groepsletter"}{contact.custom_2062}{/capture}' .
+        '{assign var="user_groepsletter" value=$part_groepsletter|default:$jaar_groepsletter|default:""}' .
+        '{capture assign="part_groepsnaam"}{participant.custom_1803}{/capture}' .
+        '{capture assign="jaar_groepsnaam"}{contact.custom_2063}{/capture}' .
+        '{assign var="user_groepsnaam" value=$part_groepsnaam|default:$jaar_groepsnaam|default:""}' .
+        '{capture assign="user_displayname"}{contact.display_name}{/capture}' .
+        '{capture assign="user_eventstart"}{event.start_date}{/capture}' .
+        '{assign var="user_eventstart_ts" value=$user_eventstart|date_format:"%s"|default:0}' .
+        '{assign var="user_smartynow" value=$smarty.now|date_format:"%Y%m%d_%H%M%S"}';
+
+    try {
+        $hdr = (string) \CRM_Core_DAO::singleValueQuery("SELECT body_html FROM civicrm_site_token WHERE name = 'smarty_header'");
+        $chain = _cssinliner_extract_header_vars($hdr, $targets);
+        if (trim($chain) === '') {
+            throw new \RuntimeException('geen keten-vars uit smarty_header geëxtraheerd');
+        }
+        $block = '{*OZKSV*}' . $chain . $extra;
+        wachthond('cssinliner', 3, '### CSSINLINER [SUBJECTVARS] - keten-vars uit smarty_header geëxtraheerd', ['bytes' => strlen($block)]);
+    } catch (\Throwable $ex) {
+        wachthond('cssinliner', 1, '### CSSINLINER [SUBJECTVARS] - header-extractie faalde, hardcoded fallback gebruikt: ' . $ex->getMessage());
+        $block = _cssinliner_subjectvars_fallback();
+    }
+    return $block;
+}
+
+/**
+ * Extraheert uit de smarty_header-body de {assign}/{capture}-statements voor de gevraagde
+ * target-vars PLUS hun transitieve {capture}-afhankelijkheden ($vars die in hun waarde/body
+ * staan). De statements worden teruggegeven in originele header-volgorde (zodat captures vóór
+ * hun gebruik staan; de header draait immers top-down). Werkt alleen voor 1-op-1 op top-niveau
+ * gedefinieerde vars — vars die uitsluitend binnen een {if}-blok worden gezet (zoals groep*)
+ * komen hier NIET uit (die definieer je expliciet in de aanroeper).
+ */
+function _cssinliner_extract_header_vars(string $hdr, array $targets): string {
+    $defs = [];  // naam => ['stmt'=>..., 'pos'=>int, 'deps'=>[...]]
+
+    // 1) {assign var="NAAM" ...}  — eerste definitie per naam wint
+    if (preg_match_all('/\{assign\s+var="([a-zA-Z0-9_]+)"[^}]*\}/', $hdr, $m, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) {
+        foreach ($m as $mm) {
+            $name = $mm[1][0];
+            if (isset($defs[$name])) {
+                continue;
+            }
+            preg_match_all('/\$([a-zA-Z0-9_]+)/', $mm[0][0], $d);
+            $defs[$name] = ['stmt' => $mm[0][0], 'pos' => $mm[0][1], 'deps' => array_values(array_unique($d[1]))];
+        }
+    }
+    // 2) {capture assign="NAAM"}BODY{/capture}  — niet overschrijven (assign uit stap 1 wint)
+    if (preg_match_all('/\{capture\s+assign="([a-zA-Z0-9_]+)"\}(.*?)\{\/capture\}/s', $hdr, $m, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) {
+        foreach ($m as $mm) {
+            $name = $mm[1][0];
+            if (isset($defs[$name])) {
+                continue;
+            }
+            preg_match_all('/\$([a-zA-Z0-9_]+)/', $mm[2][0], $d);
+            $defs[$name] = ['stmt' => $mm[0][0], 'pos' => $mm[0][1], 'deps' => array_values(array_unique($d[1]))];
+        }
+    }
+
+    // Transitieve closure vanaf de targets
+    $need  = [];
+    $stack = $targets;
+    while ($stack) {
+        $n = array_pop($stack);
+        if (isset($need[$n]) || !isset($defs[$n])) {
+            continue;
+        }
+        $need[$n] = $defs[$n];
+        foreach ($defs[$n]['deps'] as $dep) {
+            if (!isset($need[$dep]) && isset($defs[$dep])) {
+                $stack[] = $dep;
+            }
+        }
+    }
+
+    // Sorteer op originele header-positie zodat captures vóór hun gebruik staan
+    uasort($need, function ($a, $b) {
+        return $a['pos'] <=> $b['pos'];
+    });
+
+    $out = '';
+    foreach ($need as $d) {
+        $out .= $d['stmt'];
+    }
+    return $out;
+}
+
+/**
+ * Volledige hardcoded versie van het subjectvars-blok. Wordt alleen gebruikt als de
+ * runtime-extractie uit de smarty_header faalt (zie _cssinliner_subjectvars). Houd 'm
+ * gelijk aan de header-ketens als veiligheidsnet.
+ */
+function _cssinliner_subjectvars_fallback(): string {
+    return
+        '{*OZKSV*}' .
+        // kampkort: participant -> contributie -> jaar(contact) -> activiteit
+        '{capture assign="part_kampkort"}{participant.custom_950}{/capture}' .
+        '{capture assign="jaar_kampkort"}{contact.custom_901}{/capture}' .
+        '{capture assign="geld_kampkort"}{contribution.custom_1744:name}{/capture}' .
+        '{capture assign="act_kampkort"}{activity.custom_1565}{/capture}' .
+        '{assign var="user_kampkort" value=$part_kampkort|default:$geld_kampkort|default:$jaar_kampkort|default:$act_kampkort|default:""}' .
+        // kampnaam
+        '{capture assign="part_kampnaam"}{participant.custom_949}{/capture}' .
+        '{capture assign="jaar_kampnaam"}{contact.custom_900}{/capture}' .
+        '{capture assign="geld_kampnaam"}{contribution.custom_1743:name}{/capture}' .
+        '{capture assign="act_kampnaam"}{activity.custom_1703}{/capture}' .
+        '{assign var="user_kampnaam" value=$part_kampnaam|default:$geld_kampnaam|default:$jaar_kampnaam|default:$act_kampnaam|default:""}' .
+        // kamptype
+        '{capture assign="part_kamptype"}{participant.custom_992}{/capture}' .
+        '{capture assign="jaar_kamptype"}{contact.custom_993}{/capture}' .
+        '{assign var="user_kamptype" value=$part_kamptype|default:$jaar_kamptype|default:""}' .
+        // groepskleur — canonieke header-naam is user_groepskleur (part wint, anders jaar)
+        '{capture assign="part_groepskleur"}{participant.custom_1766}{/capture}' .
+        '{capture assign="jaar_groepskleur"}{contact.custom_1228}{/capture}' .
+        '{assign var="user_groepskleur" value=$part_groepskleur|default:$jaar_groepskleur|default:""}' .
+        // groepsletter — canonieke header-naam is user_groepsletter
+        '{capture assign="part_groepsletter"}{participant.custom_1765}{/capture}' .
+        '{capture assign="jaar_groepsletter"}{contact.custom_2062}{/capture}' .
+        '{assign var="user_groepsletter" value=$part_groepsletter|default:$jaar_groepsletter|default:""}' .
+        // groepsnaam — canonieke header-naam is user_groepsnaam
+        '{capture assign="part_groepsnaam"}{participant.custom_1803}{/capture}' .
+        '{capture assign="jaar_groepsnaam"}{contact.custom_2063}{/capture}' .
+        '{assign var="user_groepsnaam" value=$part_groepsnaam|default:$jaar_groepsnaam|default:""}' .
+        // voornaam / displayname — werken óók native als {contact.first_name}/{contact.display_name}
+        // in een onderwerp; hier ook als {$user_*} voor een consistente vocabulaire (voornaam
+        // verbatim uit header; displayname spiegelt diezelfde vorm).
+        '{capture assign="user_voornaam"}{contact.first_name}{/capture}' .
+        '{capture assign="user_displayname"}{contact.display_name}{/capture}' .
+        // kampjaar — Smarty-afgeleid (jaartal uit kampstart). Hele kampstart-keten verbatim uit
+        // de header overgenomen, want user_kampjaar = $user_kampstart|date_format:"%Y".
+        '{capture assign="part_kampstart"}{participant.custom_1780}{/capture}' .
+        '{capture assign="jaar_kampstart"}{contact.custom_1155}{/capture}' .
+        '{capture assign="event_kampstart"}{event.start_date}{/capture}' .
+        '{capture assign="act_kampstart"}{activity.custom_1570}{/capture}' .
+        '{assign var="user_kampstart" value=$part_kampstart|default:$jaar_kampstart|default:$event_kampstart|default:$act_kampstart|default:""}' .
+        '{assign var="user_kampjaar" value=$user_kampstart|date_format:"%Y"|default:0}' .
+        // eventstart — START-datum van het EVENT ZELF (bv. trainingsdag / meeting kampstaf dat
+        // bij de leiding-registratie hoort), NIET het kampjaar/kampstart. Exposed als unix-ts
+        // (date_format:"%s" parset de date-string via strtotime) zodat het onderwerp zelf kan
+        // formatteren, bv {$user_eventstart_ts|date_format:"%d-%m"}.
+        '{capture assign="user_eventstart"}{event.start_date}{/capture}' .
+        '{assign var="user_eventstart_ts" value=$user_eventstart|date_format:"%s"|default:0}' .
+        // datum vandaag in Ymd_His (bv. 20260622_143015) — Smarty-builtin $smarty.now, geen token
+        '{assign var="user_smartynow" value=$smarty.now|date_format:"%Y%m%d_%H%M%S"}';
+}
+
 function _cssinliner_on_token_render(\Civi\Token\Event\TokenRenderEvent $e): void {
     $extdebug = 'cssinliner';
     $cache = _cssinliner_smarty_token_cache();
 
-    if (empty($cache) || strpos($e->string, '##OZK_SMARTY:') === FALSE) {
-        return;
+    // Stap 0: SUBJECT-Smarty-variabelen. Het onderwerp wordt als losse text/plain-message
+    // gerenderd; de body-header (smarty_header) lekt NIET naar die scope, dus {$user_kampkort}
+    // e.d. zouden in het onderwerp leeg blijven. We prependen daarom een compact capture-blok
+    // (alleen {assign}s, geen output) met de meest gebruikte camp-variabelen. De {*OZKSV*}
+    // Smarty-comment dient als guard én wordt door Smarty (prio 0) verwijderd, dus het
+    // onderwerp blijft schoon. De CiviCRM-tokens in dit blok worden in Stap 2 hieronder
+    // alsnog geresolved (de standaard eval-fase scant site-token/subject-bodies niet).
+    $isPlain = (($e->message['format'] ?? '') === 'text/plain');
+    if ($isPlain && strpos($e->string, '{$') !== FALSE && strpos($e->string, '{*OZKSV*}') === FALSE) {
+        $e->string = _cssinliner_subjectvars() . $e->string;
+        wachthond($extdebug, 3,
+            "### CSSINLINER [TOKEN-RENDER] - subjectvars-blok geprepend aan text/plain-onderwerp",
+            ['bytes' => strlen($e->string)]
+        );
     }
 
-    // Stap 1: Injecteer alle Smarty bodies
-    foreach ($cache as $field => $rawBody) {
-        $placeholder = '##OZK_SMARTY:' . $field . '##';
-        if (strpos($e->string, $placeholder) !== FALSE) {
-            $e->string = str_replace($placeholder, $rawBody, $e->string);
-            wachthond($extdebug, 3,
-                "### CSSINLINER [TOKEN-RENDER] - placeholder site.$field vervangen door raw Smarty body",
-                ['bytes' => strlen($rawBody)]
-            );
+    // Stap 1: Injecteer alle Smarty bodies (site-token placeholders in de body)
+    if (!empty($cache) && strpos($e->string, '##OZK_SMARTY:') !== FALSE) {
+        foreach ($cache as $field => $rawBody) {
+            $placeholder = '##OZK_SMARTY:' . $field . '##';
+            if (strpos($e->string, $placeholder) !== FALSE) {
+                $e->string = str_replace($placeholder, $rawBody, $e->string);
+                wachthond($extdebug, 3,
+                    "### CSSINLINER [TOKEN-RENDER] - placeholder site.$field vervangen door raw Smarty body",
+                    ['bytes' => strlen($rawBody)]
+                );
+            }
         }
     }
 
@@ -776,9 +981,18 @@ function _cssinliner_on_token_render(\Civi\Token\Event\TokenRenderEvent $e): voi
 
     $reprocessing = TRUE;
     try {
-        $ctx = (array) ($e->row->context ?? []);
-        // Smarty NIET uitvoeren in deze pass — dat doen we straks in TokenCompatSubscriber (prio 0)
-        $ctx['smarty'] = FALSE;
+        // $e->row->context is een TokenRowContext-OBJECT (ArrayAccess), géén platte array.
+        // Een (array)-cast levert alleen de protected props op (* tokenProcessor / * tokenRow),
+        // NIET de entity-id's — daardoor kon de mini-processor {participant.x} niet resolven en
+        // maakte hij ze leeg. We lezen de id's daarom via ArrayAccess uit de rij-context en
+        // bouwen een platte context voor de tijdelijke TokenProcessor.
+        $src = $e->row->context;
+        $ctx = ['smarty' => FALSE]; // Smarty hier NIET draaien; dat doet TokenCompatSubscriber (prio 0)
+        foreach (['contactId', 'participantId', 'eventId', 'activityId', 'contributionId', 'membershipId', 'caseId', 'contact'] as $k) {
+            if (isset($src[$k])) {
+                $ctx[$k] = $src[$k];
+            }
+        }
 
         $tp = new \Civi\Token\TokenProcessor(\Civi::dispatcher(), $ctx);
         $tp->addMessage('body', $e->string, 'text/html');
