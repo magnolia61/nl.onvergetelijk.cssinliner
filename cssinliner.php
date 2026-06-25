@@ -139,6 +139,16 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
     $original_html  = $params['html']   ?? '';
     $all_css    = '';
 
+    // Vang het template-ID op dat headersync bovenin de template-body zette
+    // (<meta name="msg-template-id">) VOORDAT de meta-strip hieronder 'm wist.
+    // We zetten 'm straks opnieuw in de verse <head>, zodat je aan de bron van
+    // een verzonden mail direct ziet om welk MessageTemplate het gaat.
+    $tpl_id     = NULL;
+    if (preg_match('/<meta\s+name=["\']msg-template-id["\']\s+content=["\'](\d+)["\']/i', $original_html, $mtid)) {
+        $tpl_id = $mtid[1];
+    }
+    wachthond($extdebug, 4, "Template-ID uit bron geëxtraheerd",                ['msg_template_id' => $tpl_id ?? 'ONBEKEND']);
+
     try {
         wachthond($extdebug, 2, "########################################################################");
         wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.2 START CSS OPHALEN & FALLBACKS",   "[FETCHING]");
@@ -270,7 +280,7 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
         wachthond($extdebug, 1, "### CSSINLINER [ALTERMAIL] - 1.5 START FINALE CLEANUP",        "[CLEANUP-INIT]");
         wachthond($extdebug, 2, "########################################################################");
         
-        $params['html'] = _cssinliner_cleanup_html($rendered_html, $params['subject'] ?? 'Onvergetelijke Zomerkampen', TRUE);
+        $params['html'] = _cssinliner_cleanup_html($rendered_html, $params['subject'] ?? 'Onvergetelijke Zomerkampen', TRUE, $tpl_id);
 
     } catch (\Exception $e) {
         wachthond($extdebug, 1, "CRITICAL ERROR TIJDENS MAIL PARSING: " . $e->getMessage(),     "[ERROR]");
@@ -280,7 +290,7 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
 /**
  * HTML opschonen en CiviCRM-vervuiling verwijderen
  */
-function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', $is_final_send = FALSE) {
+function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', $is_final_send = FALSE, $tpl_id = NULL) {
     $extdebug   = 'cssinliner';
     $stats      = [];
 
@@ -548,6 +558,12 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
     $clean_html .= "<head>\n";
     $clean_html .= "    <meta charset=\"utf-8\">\n";
     $clean_html .= "    <meta name=\"generator\" content=\"nl.onvergetelijk.cssinliner\">\n";
+    // Herplaats het template-ID (opgevangen in alterMailParams vóór de meta-strip).
+    // Hierdoor blijft in de bron van een verzonden mail zichtbaar welk MessageTemplate
+    // de basis was — handig om snel de juiste template terug te vinden.
+    if (!empty($tpl_id)) {
+        $clean_html .= "    <meta name=\"msg-template-id\" content=\"" . (int) $tpl_id . "\">\n";
+    }
     $safe_title = preg_replace('/\{[^}]*\}/', '', $title); // strip Smarty-tags zodat {$smarty.now|date_format:&quot;...&quot;} niet crasht
     $clean_html .= "    <title>" . htmlspecialchars($safe_title) . "</title>\n";
     $clean_html .= "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
