@@ -824,7 +824,11 @@ function _cssinliner_subjectvars(): string {
         '{capture assign="user_displayname"}{contact.display_name}{/capture}' .
         '{capture assign="user_eventstart"}{event.start_date}{/capture}' .
         '{assign var="user_eventstart_ts" value=$user_eventstart|date_format:"%s"|default:0}' .
-        '{assign var="user_smartynow" value=$smarty.now|date_format:"%Y%m%d_%H%M%S"}';
+        '{assign var="user_smartynow" value=$smarty.now|date_format:"%Y%m%d_%H%M%S"}' .
+        '{capture assign="user_image_url"}{contact.image_URL}{/capture}' .
+        '{assign var="user_image_basename" value=$user_image_url|regex_replace:"/^.*\//":""|regex_replace:"/\?.*$/":""}' .
+        '{assign var="user_polaroid_url" value="https://www.onvergetelijk.nl/sites/default/files/styles/square_0260_naam/public/profielfotos/"|cat:$user_image_basename}' .
+        '{assign var="user_polaroid_plain_url" value="https://www.onvergetelijk.nl/sites/default/files/styles/square_0260/public/profielfotos/"|cat:$user_image_basename}';
 
     try {
         $hdr = (string) \CRM_Core_DAO::singleValueQuery("SELECT body_html FROM civicrm_site_token WHERE name = 'smarty_header'");
