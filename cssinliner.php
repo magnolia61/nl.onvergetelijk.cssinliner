@@ -136,6 +136,17 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
     
     wachthond($extdebug, 4, "Detectie details",                                 ['reden' => $detectie_reden, 'context_ontvangen' => $context]);
 
+    // --- OZK-mails zijn HTML-only ---
+    // msg_text is in alle templates bewust leeg (conventie). CiviCRM genereert dan zelf
+    // een text/plain-deel via html2text, maar de footer (checklist/HL-foto's, M61-blok)
+    // is op dat moment nog niet gerenderd → die belandt als rauwe Smarty/{if}-code in de
+    // tekstversie. Omdat we de tekstversie toch niet zelf onderhouden, verwijderen we 'm:
+    // de mail gaat HTML-only (wat vrijwel elke client toont). Alleen voor OZK-mail.
+    if (!empty($params['text'])) {
+        wachthond($extdebug, 4, "Tekst-deel verwijderd → HTML-only",            ['text_lengte_was' => strlen($params['text'])]);
+        $params['text'] = '';
+    }
+
     $original_html  = $params['html']   ?? '';
     $all_css    = '';
 
@@ -281,6 +292,10 @@ function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
         wachthond($extdebug, 2, "########################################################################");
         
         $params['html'] = _cssinliner_cleanup_html($rendered_html, $params['subject'] ?? 'Onvergetelijke Zomerkampen', TRUE, $tpl_id);
+
+        // Stap 1.6: geen embedding — afbeeldingen blijven als externe URLs staan.
+        // base64 data-URI's worden door Gmail geblokkeerd; CID vereist een core-patch.
+        // Externe URLs op www.onvergetelijk.nl werken correct in alle grote mail-clients.
 
     } catch (\Exception $e) {
         wachthond($extdebug, 1, "CRITICAL ERROR TIJDENS MAIL PARSING: " . $e->getMessage(),     "[ERROR]");
