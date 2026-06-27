@@ -392,7 +392,7 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
     // - <p>{token}</p>        → <div>{token}</div>
     // - <br>{token}           → <div>{token}</div>   (losse br vóór token)
     // - {token} zonder wrapper → <div>{token}</div>  (wanneer niet al in <div>)
-    $block_tokens = 'site\.smarty_logo|site\.smarty_intake_tips|site\.smarty_checkleid|site\.smarty_checkdeel|site\.smarty_checktopkamp|site\.smarty_checkintake|site\.smarty_loginrequest_deel|site\.smarty_loginrequest_leid|site\.smarty_fietshuur|site\.smarty_fotos_hl|site\.smarty_fotos_hl_tel';
+    $block_tokens = 'site\.smarty_logo|site\.smarty_intake_tips|site\.smarty_checkleid|site\.smarty_checkdeel|site\.smarty_checktopkamp|site\.smarty_checkintake|site\.smarty_loginrequest_deel|site\.smarty_loginrequest_leid|site\.smarty_inloglink_request|site\.smarty_fietshuur|site\.smarty_fotos_hl|site\.smarty_fotos_hl_tel';
     // Strip <p> wrapper → <div>
     $html = preg_replace('/<p[^>]*>\s*(\{(?:' . $block_tokens . ')\})\s*<\/p>/i', '<div>$1</div>', $html);
     // Strip <br> vóór token → <div>
