@@ -991,7 +991,8 @@ function _cssinliner_on_token_render(\Civi\Token\Event\TokenRenderEvent $e): voi
     }
 
     // Check of er nog CiviCRM tokens in de string staan die verwerkt moeten worden
-    if (!preg_match('/\{(?:participant|contact|event|activity)\.[a-zA-Z_0-9.:]+\}/', $e->string)) {
+    $stap2_nodig = preg_match('/\{(?:participant|contact|event|activity)\.[a-zA-Z_0-9.:]+\}/', $e->string);
+    if (!$stap2_nodig) {
         return;
     }
 
@@ -1011,7 +1012,10 @@ function _cssinliner_on_token_render(\Civi\Token\Event\TokenRenderEvent $e): voi
         }
 
         $tp = new \Civi\Token\TokenProcessor(\Civi::dispatcher(), $ctx);
-        $tp->addMessage('body', $e->string, 'text/html');
+        // Format-bewust: een text/plain-onderwerp mag NIET HTML-encoded worden, anders
+        // verschijnt bv. "Loïs" in het onderwerp als "Lo&iuml;s" (de entity is in platte
+        // tekst letterlijk zichtbaar). HTML-bodies blijven text/html (entities zijn daar oké).
+        $tp->addMessage('body', $e->string, $isPlain ? 'text/plain' : 'text/html');
         $tp->addRow()->context($ctx);
         $tp->evaluate();
         foreach ($tp->getRows() as $tpRow) {
