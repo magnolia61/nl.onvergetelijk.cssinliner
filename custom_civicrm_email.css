@@ -1,0 +1,522 @@
+a {
+	color:			#C13C62;
+	text-decoration:	underline;
+}
+
+img.checkbox {
+	height:			32px;
+	width:			32px;
+	border:			1px solid #888888;	/* border rond icons, iets donkerder; shorthand = veilig voor inliners */
+	border-radius:		4px;
+}
+
+/* Hoofdleiding-thumbnails (was inline op <img class="hlimg">) -> class.
+   Wordt gebruikt door zowel het smarty_fotos_hl-token als de losse blokken.
+   1px solid black = zichtbare rand (consistent met img.profielfoto). */
+img.hlimg {
+	width:			91px;
+	height:			91px;
+	border:			1px solid black;
+	pointer-events:		none;	/* foto's niet klikbaar/aanwijsbaar (zoals het logo) */
+	cursor:			default;
+}
+
+table {
+	border-collapse:	collapse;
+	border-spacing:		0px;
+	margin-bottom:		15px;
+}
+
+table th, table td {
+	margin:			0px;
+}
+
+table.nice, table.royal, table.choice, table.basic {
+	width:			100%;
+	margin-bottom:		15px;
+}
+
+table.nice, table.royal {
+	border:			1px solid lightgrey;
+}
+
+/* Links in keuzetabellen met 2 knoppen */
+table.choice td a {
+	color:			white;
+	text-decoration:	none;
+}
+
+table.nice td, table.choice td {
+	padding:		5px;
+}
+
+table.nice td:first-child {
+	width:			auto;
+	white-space:		nowrap;
+}
+
+table.nice.stappenplan td:first-child {
+	width:			75px;
+}
+
+table.nice.stappenplan td:nth-child(2) {
+	width:			75px;
+	text-align:		center;
+}
+
+/* Data-tabel met grijze header-rij, geen buitenborder */
+table.niceheader {
+	width:			100%;
+	margin-bottom:		15px;
+}
+
+table.niceheader td, table.niceheader th {
+	padding:		8px 6px;
+	border-bottom:		1px solid #e8e8e8;
+}
+
+/* Royal: contact/participant info — interne borders op alle cellen */
+table.royal td, table.royal th {
+	border:			1px solid lightgrey;
+	padding:		10px;
+}
+
+/* Basic: geen border — voor profielfoto's en eenvoudige structurele blokken */
+table.basic td, table.basic th {
+	padding:		5px;
+}
+
+/* Foto/structuur-tabellen: GELIJKE witruimte boven én onder de tabel (symmetrisch),
+   op het standaard 15px-ritme van de mail. */
+table.basic {
+	margin-top:		15px;
+	margin-bottom:		15px;
+}
+
+p {
+	margin-top:		0px;
+	margin-bottom:		15px;
+	line-height:		1.4;
+}
+
+p:first-of-type {
+	margin-top:		0px;
+}
+
+.divbtn {
+	width:			100%;
+	background-color:	whitesmoke;
+	padding:		10px 0px;
+	margin:			8px 0px;
+	text-align:		center;
+	cursor:			pointer;
+	outline:		none;
+	color:			black;
+	border:			none;
+	border-radius:		0px;
+}
+
+/* divbtn met link — inherit text color en geen underline */
+.divbtn a {
+	color:			inherit		!important;
+	text-decoration:	none		!important;
+}
+
+h1 {
+	font-family:		Rambla, Arial, Helvetica, sans-serif;
+	font-size:		xx-large;
+	margin:			0px 0px 7px 0px;
+	text-transform:		uppercase;
+}
+
+h2 {
+	font-family:		Rambla, Arial, Helvetica, sans-serif;
+	font-size:		x-large;
+	margin:			0px 0px 7px 0px;
+	text-transform:		uppercase;
+}
+
+h3 {
+	font-family:		Rambla, Arial, Helvetica, sans-serif;
+	font-size:		1.3em;
+	margin:			7px 0px 7px 0px;
+}
+
+h4 {
+	font-family:		Rambla, Arial, Helvetica, sans-serif;
+	font-size:		1.1em;
+	margin:			10px 0px 5px 0px;
+}
+
+/* Kleur-klasses — voor divbtn, tabellen, en andere elementen */
+/* Donkere kleuren = witte tekst (contrast); lichte kleuren = zwarte tekst */
+
+.ozkgroen {
+	background-color:	#439F35		!important;
+	color:			white		!important;
+}
+
+.ozkblauw {
+	background-color:	#006E83		!important;
+	color:			white		!important;
+}
+
+.ozkoranje {
+	background-color:	#F7941E		!important;
+	color:			white		!important;
+}
+
+.ozkroze {
+	background-color:	#C13C62		!important;
+	color:			white		!important;
+}
+
+.googlered {
+	background-color:	#DB4437		!important;
+	color:			white		!important;
+}
+
+.facebookblue {
+	background-color:	#3B5998		!important;
+	color:			white		!important;
+}
+
+.skyblue {
+	background-color:	skyblue		!important;
+	color:			black		!important;
+}
+
+.whitesmoke {
+	background-color:	whitesmoke	!important;
+	color:			black		!important;
+}
+
+.border {
+	border-color:		lightgray	!important;
+	border:			1px solid	!important;
+}
+
+.site-logo {
+	display:		block;
+	margin:			0;
+	padding:		0;
+}
+
+.site-logo img {
+	display:		block;
+	width:			360px;
+	max-width:		100%;
+	height:			auto;
+}
+
+/* .testbox is alleen bedoeld voor testweergave in de browser, niet in emails */
+
+/* Afsluitende groetsectie: ruimte boven, regels dicht op elkaar */
+.ozk-groet {
+	margin-top:	1.5em;
+	line-height:	1.4;
+}
+
+/* Geen extra ruimte boven groet als die al in een tabelcel staat */
+td .ozk-groet {
+	margin-top:	0;
+}
+
+/* Keuzeknoppen — gekleurde buttons in choice-tabellen */
+/* Tekst en links altijd wit (donkere achtergrond), geen underline */
+td.choice-green, td.choice-blue, td.choice-orange, td.choice-roze {
+	color:			white			!important;
+	text-decoration:	none			!important;
+}
+
+td.choice-green a, td.choice-blue a, td.choice-orange a, td.choice-roze a {
+	color:			white			!important;
+	text-decoration:	none			!important;
+}
+
+td.choice-green {
+	background-color:	#439F35		!important;
+	text-align:		center			!important;
+	padding:		10px			!important;
+}
+
+td.choice-blue {
+	background-color:	#006E83		!important;
+	text-align:		center			!important;
+	padding:		10px			!important;
+}
+
+td.choice-orange {
+	background-color:	#F7941E		!important;
+	text-align:		center			!important;
+	padding:		10px			!important;
+}
+
+td.choice-roze {
+	background-color:	#C13C62		!important;
+	text-align:		center			!important;
+	padding:		10px			!important;
+}
+
+td.choice-white {
+	background-color:	white			!important;
+	text-align:		center			!important;
+	padding:		10px			!important;
+}
+
+/* Geen border om choice-tabel — expliciet overschrijft eventuele table.nice-erfenis */
+table.choice {
+	border:			none			!important;
+}
+
+/* Paragraaf direct vóór een profielfoto — beperkte ruimte eronder */
+p.voor-foto {
+	margin-bottom:	5px;
+}
+
+/* Profielfoto tabel — sluit compact aan op de tekst erboven */
+table.profielfoto-smal {
+	margin-top:	0;
+}
+
+/* Profielfoto-afbeelding — centrale border/afmeting i.p.v. inline styles */
+img.profielfoto {
+	border:		2px solid black;
+	width:		128px;
+	height:		128px;
+}
+
+/* Testimonial/quote-blokken (op gekleurde achtergrond, bijv. td.choice-roze). */
+/* Vervangt herhaalde inline styling; emogrifier inlinet deze classes bij verzending. */
+/* line-height 1.4 = consistent met de lopende tekst. Witte kleur erft van de cel. */
+.ozk-quote {
+	font-size:		16px;
+	line-height:		1.4;
+	color:			white;
+}
+
+.ozk-quote-mark {
+	font-size:		72px;
+	line-height:		72px;
+	color:			white;
+	text-align:		left;
+}
+
+
+/* Herhaald grijs infoblok (was 384x inline) -> class; cssinliner inlinet dit bij verzending */
+.infobox {
+	background-color:	rgb(239,239,239);
+	border:			1px solid;
+	padding:		5px;
+}
+
+/* GEGEVENS-headercel (was background-color:#d9d9d9 inline) */
+.kop {
+	background-color:	#d9d9d9;
+}
+/* Breedte-utility (50%) — veelgebruikt in 2-koloms GEGEVENS-tabellen */
+.w50 {
+	width:			50%;
+}
+
+/* Cel-dimensie utilities (waren inline height/width op tabelcellen) */
+.h24 {
+	height:24px;
+}
+.h30 {
+	height:30px;
+}
+.h32 {
+	height:32px;
+}
+.h40 {
+	height:40px;
+}
+.w100 {
+	width:100%;
+}
+.w30 {
+	width:30%;
+}
+.w40 {
+	width:40%;
+}
+.w300 {
+	width:300px;
+}
+.w76 {
+	width:76px;
+}
+.w51 {
+	width:51%;
+}
+.w49 {
+	width:49%;
+}
+.w5 {
+	width:5px;
+}
+
+/* Tier-1 layout-utilities (waren herhaald inline; cssinliner inlinet bij verzending) */
+.fs12 {
+	font-size:12px;
+}
+.nowrap {
+	white-space:nowrap;
+}
+.vtop {
+	vertical-align:top;
+}
+.vbottom {
+	vertical-align:bottom;
+}
+.tac {
+	text-align:center;
+}
+
+/* Logo/banner 60px hoog zonder zichtbare rand (JUBILEUM-mails) */
+img.img-logo60 {
+	height:60px;
+	border-width:0px;
+	border-style:solid;
+}
+/* Quote-avatar 64px met dunne rand (WERVING QUOTES) */
+img.quote-avatar {
+	width:64px;
+	height:64px;
+	border:1px solid;
+}
+
+/* Desktop iets ruimere regelafstand in bodytekst. Mobiel houdt de inline base (1.4) —
+   mobiele clients geven daar zelf al wat extra. cssinliner behoudt deze @media in een
+   <style>-blok (zie cssinliner.php 1.4.1b). 600px = gangbare mobiel/desktop-grens. */
+@media (min-width: 600px) {
+	p {
+		line-height:	1.6;
+	}
+}
+
+/* Hover-effect op divbtn-knoppen. Werkt alleen in clients die embedded <style> + :hover
+   ondersteunen (o.a. Gmail webmail in Chrome, Apple Mail). Gmail-app (mobiel/touch) en
+   Outlook-desktop negeren dit -> knop blijft statisch (veilige terugval). cssinliner
+   bewaart deze :hover-regels in het <style>-blok (zie cssinliner.php 1.4.1b). */
+.divbtn:hover {
+	opacity:		0.82		!important;
+}
+.divbtn.skyblue:hover {
+	background-color:	#006E83		!important;	/* skyblue -> ozkblauw bij hover */
+	color:			white		!important;
+}
+.divbtn a:hover {
+	text-decoration:	underline	!important;
+}
+
+/* === HOVER-TEST technieken (TESTMAIL HOVER 527) === */
+/* (1) gekleurde div die van achtergrond wisselt bij hover */
+.hoverbox:hover {
+	background-color:	#cccccc		!important;
+}
+/* (2) image-swap (bulletproof): 2e afbeelding (swap-in) groeit uit bij hover,
+   1e (swap-out) krimpt weg. Werkt in clients met <style>+:hover. */
+.swap-in {
+	max-height:		0px;
+	overflow:		hidden;
+}
+a:hover .swap-out {
+	max-height:		0px		!important;
+	overflow:		hidden		!important;
+}
+a:hover .swap-in {
+	max-height:		500px		!important;
+}
+
+/* Profielfoto-cel: 1/3 breed zodat de fotokolom uitlijnt met de 33%-scheidingslijn
+   van de GEGEVENS-tabel (table.royal). De foto zelf blijft 128px (img.profielfoto),
+   links uitgelijnd binnen de cel. */
+.fotocel {
+	height:			128px;
+	width:			33%;
+	text-align:		left;
+	padding-left:		0;
+}
+/* Foto-rij is 2-koloms (foto 1/3 / naam 2/3) — sum=100% net als table.royal, zodat de
+   fotokolom uitlijnt met de 33%-scheidingslijn. De naam-cel staat direct ná de foto-cel. */
+td.fotocel + td {
+	width:			67%;
+}
+/* Criteria-icoontje (leeftijd/klas, was inline 18px) */
+img.criteria-icon {
+	height:			18px;
+	width:			18px;
+	border:			1px solid #888888;
+	float:			right;
+}
+
+/* Consolidatie-classes (waren herhaald inline) */
+.fs14 {
+	font-size:		14px;
+}
+.bg-licht {
+	background-color:	#efefef;
+}
+.bg-grijs {
+	background-color:	#d3d3d3;
+}
+/* 2e infoblok-variant (lichtere rand, ruimere padding) */
+.infobox-rand {
+	background:		#eeeeee;
+	border:			1px solid #cccccc;
+	padding:		5px 10px;
+	margin-bottom:		15px;
+}
+
+/* GEGEVENS-tabel (table.royal): vaste 1/3–2/3 kolomverhouding + celhoogte STRUCTUREEL
+   i.p.v. .w50/.h24 per cel. Emogrifier inlinet :first-child, dus werkt in alle clients.
+   colspan-kopregel krijgt 33% maar spant beide kolommen → genegeerd. */
+table.royal td {
+	width:			67%;
+	height:			24px;
+}
+table.royal td:first-child {
+	width:			33%;
+}
+
+/* GEGEVENS-datatabel — semantische hoofdclass. Uniforme rijhoogte + top-uitlijning
+   op celniveau, zodat losse .h24 (246x) en .vtop (24x) uit de body verdwijnen.
+   Afwijkende rijhoogtes blijven via scoped overrides (hogere specificiteit dan de
+   default-regel). Breedtes (.w50/.w30) en .kop blijven per cel: die variëren/markeren. */
+table.gegevens td {
+	height:			24px;
+	vertical-align:		top;
+}
+table.gegevens td.h30 { height: 30px; }
+table.gegevens td.h32 { height: 32px; }
+table.gegevens td.h40 { height: 40px; }
+
+/* Profielfoto-cel: linker-padding echt 0 (table.basic td zet anders 5px terug).
+   Hogere specificiteit dan table.basic td zodat de foto links uitlijnt. */
+table.basic td.fotocel {
+	padding-left:		0;
+}
+
+/* Hoofdleiding-fotoblok (BOX-HL-IMAGES) — STRUCTUUR in token smarty_fotos_hl (tabel,
+   cross-client robuust → foto's naast elkaar, ook op mobiel), STYLING hier. */
+#BOX-HL-IMAGES td {
+	width:			91px;
+	vertical-align:		top;
+	text-align:		left;
+	padding-right:		10px;
+}
+#BOX-HL-IMAGES td:last-child {
+	padding-right:		0;
+}
+
+/* Disclaimer-tekst subtiel grijs (zoals de losse disclaimer-regels al waren) */
+.disclaimer {
+	color:			#808080;
+}
+
+/* HL-fotoblok sluit compacter aan op het logo eronder (geen 15px tabel-marge). */
+#BOX-HL-IMAGES table {
+	margin-bottom:		0;
+}

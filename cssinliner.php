@@ -530,8 +530,9 @@ function _cssinliner_fetch_external_css($url) {
     }
     
     // EXTRA FALLBACK: Zoek direct via de extensie directory fallback
+    // (custom_civicrm_email.css woont sinds 1 jul 2026 IN deze extensiemap, niet meer los in civicrm_extensions/)
     if ($content === FALSE || trim($content) === '') {
-        $ext_dir_path = dirname(__DIR__) . '/custom_civicrm_email.css';
+        $ext_dir_path = __DIR__ . '/custom_civicrm_email.css';
         if (file_exists($ext_dir_path)) {
             $content = @file_get_contents($ext_dir_path);
             wachthond($extdebug, 4, "--- 1.2.3 LOKAAL BESTAND VIA EXTENSIEMAP OPGEHAALD ---",   ['pad' => $ext_dir_path, 'bytes' => strlen((string)$content)]);
