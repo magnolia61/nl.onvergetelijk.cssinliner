@@ -38,6 +38,7 @@ if (file_exists($extRoot . 'vendor/autoload.php')) {
 if (file_exists($extRoot . 'cssinliner.civix.php')) {
     require_once 'cssinliner.civix.php';
 }
+require_once __DIR__ . '/cssinliner.repairs.php';
 
 use Pelago\Emogrifier\CssInliner;
 
@@ -342,79 +343,23 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
 
     wachthond($extdebug, 4, "--- 1.1.1 COMMENTS & STRAY TEKST VERWIJDERD ---",  ['acties' => ($stats['html_comments_verwijderd'] ?? 0) + ($stats['stray_alt_tekst_verwijderd'] ?? 0)]);
 
-    // 2b. Smarty-template reparaties (alleen bij opslaan — bij render zijn Smarty-tags al verwerkt)
+    // 2b. Smarty-template reparaties (alleen bij opslaan — bij render zijn Smarty-tags al verwerkt).
+    // Gedeeld via cssinliner.repairs.php → ozk_repair_save_smarty() is de canonieke implementatie.
     if (!$is_final_send) {
-        // ISOLATIE: strip <p> rondom {crmScope} block-tags
-        $html = preg_replace('/<p>\s*\{crmScope\s+extensionKey=""\}\s*<\/p>/i', '{crmScope extensionKey=""}', $html);
-        $html = preg_replace('/<p>\s*\{\/crmScope\}\s*<\/p>/i', '{/crmScope}', $html);
-        // LOGICA: UNWRAP <p> rondom een losse {/if} (editor-artefact) — maar behoud de {/if}.
-        // LET OP: nooit de {/if} zelf droppen. {/if}<p> is volkomen geldige Smarty (conditie sluiten,
-        // dan nieuwe paragraaf) en mag NIET aangeraakt worden — anders raken self-contained {if}-blokken
-        // ongesloten en wordt het template onrenderbaar (zie cssinliner-ifstrip-regressie juni 2026).
-        $html = preg_replace('/<p>\s*\{\/if\s*\}\s*<\/p>/i', '{/if}', $html);
-        $html = preg_replace('/<p>\s*\{\/if\}\s*<\/p>/i', '{/if}', $html);
-        $html = str_replace('<p>{/if}</p>', '{/if}', $html);
-        // SYNTAX: herstel spaties binnen Smarty-tags
-        $html = preg_replace('/\{\s*\/if\s*\}/i', '{/if}', $html);
-        $html = preg_replace('/\{\s*\/capture\s*\}/i', '{/capture}', $html);
-        $html = preg_replace('/\{\s*\/assign\s*\}/i', '{/assign}', $html);
-        $html = preg_replace('/var="user_fietsevent"\s*\}\s*value=/i', 'var="user_fietsevent" value=', $html);
-        // ENTITEIT: vertaal HTML-entiteiten terug naar logische operatoren in Smarty-context
-        $html = str_replace(' &gt; ', ' > ', $html);
-        $html = str_replace(' &lt; ', ' < ', $html);
-        $html = str_replace(' &amp;&amp; ', ' && ', $html);
-        // OPERATOR: forceer UPPERCASE AND/OR binnen {if} condities
-        $html = preg_replace_callback('/\{if\s+(.*?)\}/i', function($m) {
-            $c = preg_replace('/\b(and)\b/i', 'AND', $m[1]);
-            $c = preg_replace('/\b(or)\b/i', 'OR', $c);
-            return '{if ' . $c . '}';
-        }, $html);
+        $html = ozk_repair_save_smarty($html);
     }
 
     $config     = CRM_Core_Config::singleton();
     $base_url   = rtrim($config->userFrameworkBaseURL, '/');
 
-    // 3a. URL-prefix stripper: verwijder alles vóór Smarty URL-tokens in attribuutwaarden.
-    // Zodra een van deze tokens tussen {} staat, begint de uiteindelijke URL altijd met https://
-    // dus mag er niets voor staan — ongeacht wat er staat (https://domein/, appeltaart, wat dan ook).
-    // [^'"()]* stopt aan de attribuutgrens zodat we nooit buiten het attribuut springen.
-    $smarty_url_vars= 'ozkweburl|ozkimgurl|loginrequest|loginlink|ozkstyles|ozkaccount|hlfimgurl';
-    $html       = preg_replace(
-        '/(["\'\(])[^\'"\(\)\{\}]*(\{\$(?:' . $smarty_url_vars . ')[^}]*\})/i',
-        '$1$2',
-        $html,
-        -1,
-        $stats['domein_prefix_voor_smarty_var_verwijderd']
-    );
+    // 3a. URL-prefix stripper — gedeeld via cssinliner.repairs.php.
+    $html       = ozk_repair_url_prefix($html);
 
-    // 3b. Block-token normalisatie: zorg dat block-level site tokens in een eigen <div> zitten
-    // zodat ze in de editor op een eigen regel staan en correct als blok renderen.
-    // - <p>{token}</p>        → <div>{token}</div>
-    // - <br>{token}           → <div>{token}</div>   (losse br vóór token)
-    // - {token} zonder wrapper → <div>{token}</div>  (wanneer niet al in <div>)
-    $block_tokens = 'site\.smarty_logo|site\.smarty_intake_tips|site\.smarty_checkleid|site\.smarty_checkdeel|site\.smarty_checktopkamp|site\.smarty_checkintake|site\.smarty_loginrequest_deel|site\.smarty_loginrequest_leid|site\.smarty_inloglink_request|site\.smarty_fietshuur|site\.smarty_fotos_hl|site\.smarty_fotos_hl_tel';
-    // Strip <p> wrapper → <div>
-    $html = preg_replace('/<p[^>]*>\s*(\{(?:' . $block_tokens . ')\})\s*<\/p>/i', '<div>$1</div>', $html);
-    // Strip <br> vóór token → <div>
-    $html = preg_replace('/<br\s*\/?>\s*(\{(?:' . $block_tokens . ')\})/i', '<div>$1</div>', $html);
-    // Wrap naakte tokens (niet voorafgegaan door <div>) in <div>
-    $html = preg_replace('/(?<!<div>)(\{(?:' . $block_tokens . ')\})(?!\s*<\/div>)/i', '<div>$1</div>', $html);
-    // Dedup: voorkom dubbel geneste <div><div>token</div></div>
-    $html = preg_replace('/<div>\s*<div>(\{(?:' . $block_tokens . ')\})<\/div>\s*<\/div>/i', '<div>$1</div>', $html);
+    // 3b. Block-token normalisatie — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_block_tokens($html);
 
-    // 3c. Witruimte ROND {site.smarty_logo} opruimen
-    // VÓÓR logo: trailing <br/> aan het einde van de groet-div → weghalen (veroorzaakt extra hoogte)
-    $html = preg_replace('/(<br\s*\/?>\s*)(<\/div>\s*<div>\{site\.smarty_logo\}<\/div>)/si',                 '$2',   $html);
-    // VÓÓR logo: <br> of <p><br/></p> direct vóór de logo-div → weghalen
-    $html = preg_replace('/(<br\s*\/?>\s*)(<div>\{site\.smarty_logo\}<\/div>)/si',                           '$2',   $html);
-    $html = preg_replace('/(<p>\s*<br\s*\/?>\s*<\/p>\s*)(<div>\{site\.smarty_logo\}<\/div>)/si',             '$2',   $html);
-    // NA logo: <br>, lege <p></p>, gebroken <div><p></div>, of stray </p> direct ná logo-div → weghalen
-    $html = preg_replace('/(<div>\{site\.smarty_logo\}<\/div>)\s*<br\s*\/?>\r?\n?/i',                        '$1',   $html, -1, $stats['logo_br_na_logo_verwijderd']);
-    $html = preg_replace('/(<div>\{site\.smarty_logo\}<\/div>)\s*<(?:p|div)>\s*(?:<br\s*\/?>)?\s*<\/(?:p|div)>/si', '$1', $html);
-    $html = str_replace('<div>{site.smarty_logo}</div></p>', '<div>{site.smarty_logo}</div>',                 $html);
-    // Oud patroon (zonder div-wrapper) — fallback
-    $html = preg_replace('/(\{site\.smarty_logo\})(\s*<p[^>]*>)\s*<br\s*\/>/i',        '$1$2',  $html, -1, $stats['logo_br_in_p_na_logo_verwijderd']);
-    $html = preg_replace('/(\{site\.smarty_logo\})\s*<p>\s*(<\/div>)/i',               '$1$2',  $html, -1, $stats['logo_lege_p_na_logo_verwijderd']);
+    // 3c. Witruimte ROND {site.smarty_logo} — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_logo_whitespace($html);
 
     $html       = preg_replace('/<img[^>]+src=["\']([^"\']+\/ozkimages\/)["\']([^>]*)>/i', '', $html, -1, $stats['loze_img_tags_verwijderd']);
 
@@ -458,91 +403,22 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
         $html
     );
 
-    // 5b. Verwijder <big> wrapper-tags (de inhoud blijft behouden).
-    //     <big> vergroot de tekst ten opzichte van de omliggende tekst — onwenselijk in e-mail.
-    $html = preg_replace('/<big>(.*?)<\/big>/is', '$1', $html, -1, $stats['big_tags_verwijderd']);
+    // 5b. Verwijder <big>-tags — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_big($html);
 
-    // 5c-pre. Vervang class="testbox" door inline style zodat de CSS-definitie niet in de mail hoeft.
-    //     De .testbox regel is verwijderd uit de externe CSS; stijl wordt nu direct meegegeven.
-    $html = preg_replace_callback('/<(p|div|span)([^>]*)\bclass="([^"]*\btestbox\b[^"]*)"([^>]*)>/i', function($m) {
-        $otherClasses = trim(preg_replace('/\btestbox\b/', '', $m[3]));
-        $classAttr    = $otherClasses ? ' class="' . $otherClasses . '"' : '';
-        return '<' . $m[1] . $m[2] . $classAttr . ' style="background-color:rgb(239,239,239);border:1px solid;padding:5px;"' . $m[4] . '>';
-    }, $html, -1, $stats['testbox_inlined']);
+    // 5c-pre. Testbox class → inline style — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_testbox($html);
 
-    // 5d. Collapseer dubbele witregels — alle combinaties van <br>, <p>, &nbsp;, \n.
-    //     Iteratief (max 5 passes) zodat gecreëerde combinaties zelf ook worden opgelost.
-    $stats['dubbele_witregels_gecollapseerd'] = 0;
-    for ($pass = 0; $pass < 5; $pass++) {
-        $before = $html;
-        // Lege <p> varianten → weg (lege inhoud, alleen &nbsp; of alleen whitespace)
-        $html = preg_replace('/<p[^>]*>\s*(<br\s*\/?>)?\s*<\/p>/i', '', $html, -1, $c1);
-        // &nbsp;-only <p> → weg
-        $html = preg_replace('/<p[^>]*>\s*(?:&nbsp;|\xc2\xa0)+\s*<\/p>/i', '', $html, -1, $c2);
-        // Opeenvolgende <br> (2+) met eventuele whitespace → één <br />
-        $html = preg_replace('/(?:<br\s*\/?>\s*){2,}/i', '<br />', $html, -1, $c3);
-        // <br> direct NA </p> of direct VOOR <p> (overbodig na/voor block-element)
-        $html = preg_replace('/<\/p>\s*<br\s*\/?>/i', '</p>', $html, -1, $c4);
-        $html = preg_replace('/<br\s*\/?>\s*<p/i', '<p', $html, -1, $c5);
-        // Meerdere lege regels in tekst → max één
-        $html = preg_replace('/\n{3,}/', "\n\n", $html, -1, $c6);
-        $stats['dubbele_witregels_gecollapseerd'] += ($c1 + $c2 + $c3 + $c4 + $c5 + $c6);
-        if ($html === $before) {
-            break;
-        }
-    }
+    // 5d. Collapseer dubbele witregels — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_spacing($html);
 
-    // 5e. Normaliseer groetsectie: meerdere <p>-tags → <div class="ozk-groet"> met <br /> tussen regels.
-    //     Ook losse <div> of <div style="margin-top..."> met groetformule krijgt de class.
-    //     CSS in custom_civicrm_email.css regelt margin-top en line-height;
-    //     Emogrifier inlinet die klasse naar style-attribuut vóór verzending.
-    $html = preg_replace_callback(
-        '/(<p[^>]*>)((?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet)[^<]*(?:<br\s*\/?>.*?)?<\/p>)((?:\s*<p[^>]*>[^<]*<\/p>)*)/is',
-        function($m) {
-            $inner = preg_replace('/<\/?p[^>]*>/i', '', $m[2]);
-            $rest  = preg_replace('/<p[^>]*>(.*?)<\/p>/is', '<br />$1', $m[3]);
-            $content = trim($inner) . $rest;
-            return '<div class="ozk-groet">' . $content . '</div>';
-        },
-        $html
-    );
-    $html = preg_replace(
-        '/<div(?:\s+style="[^"]*margin-top[^"]*")?>(?=\s*(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet|with\s+kind|regards|groet))/i',
-        '<div class="ozk-groet">',
-        $html
-    );
-    // 5e-D. <div> die een groetformule bevat NA willekeurige inline HTML (links, <p>, <br />, etc.)
-    //       Tempered greedy: (?!<\/?div\b) stopt bij geneste <div>-grenzen zodat nooit over meerdere blokken gesprongen wordt.
-    $html = preg_replace(
-        '/<div>(?=(?:(?!<\/?div\b).)*(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet))/is',
-        '<div class="ozk-groet">',
-        $html
-    );
-    // 5e-E. Bare tekst (geen wrapper) direct vóór {assign var="M61BODY"} of </body>
-    $html = preg_replace_callback(
-        '/(<br\s*\/?>\s*)((?:[^<]|<br\s*\/?>)*?(?:met\s+(?:een\s+)?(?:vriendelijke|hartelijke)|[Hh]artelijke\s+groet)(?:[^<]|<br\s*\/?>)*?)(\s*<div[^>]*>\{assign\s+var="M61BODY"|<\/body>)/is',
-        function($m) {
-            $content = trim($m[2]);
-            return $m[1] . '<div class="ozk-groet">' . $content . '</div>' . $m[3];
-        },
-        $html
-    );
-    // 5c. Verwijder <strong> direct BINNEN <h3> tags:
-    //     Een heading-tag is al intrinsiek bold — extra <strong> geeft dubbele nadruk.
-    //     Andere opmaak (bijv. <u>) binnen de <strong> wordt bewaard.
-    $html = preg_replace_callback('/<(h[3-6])([^>]*)>(.*?)<\/\1>/is', function($m) {
-        $inner = preg_replace('/<strong>(.*?)<\/strong>/is', '$1', $m[3]);
-        return '<' . $m[1] . $m[2] . '>' . $inner . '</' . $m[1] . '>';
-    }, $html, -1, $stats['strong_in_heading_verwijderd']);
+    // 5e. Normaliseer groetsectie naar <div class="ozk-groet"> — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_greeting($html);
+    // 5c. Verwijder <strong> direct binnen <h3>-<h6> — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_strong_in_heading($html);
 
-    // 6. Verwijder lege tags algemeen over de complete string
-    // 6a. <div> met alleen whitespace (spatie, tab, newline, &nbsp;) — ook met attributen
-    $html = preg_replace('/<div[^>]*>\s*(?:&nbsp;|\xc2\xa0| )?\s*<\/div>/i', '', $html);
-    // 6b. Algemeen: p, div, span, b, i zonder inhoud
-    $pattern    = '/<(p|div|span|b|i)>\s*(?:&nbsp;|\xc2\xa0|\s)*\s*<\/\1>/i';
-    for ($i = 0; $i < 3; $i++) {
-        $html   = preg_replace($pattern, '', $html, -1, $cnt_empty);
-    }
+    // 6. Verwijder lege tags — gedeeld via cssinliner.repairs.php.
+    $html = ozk_repair_empty_tags($html);
 
     wachthond($extdebug, 2, "########################################################################");
     wachthond($extdebug, 1, "### CSSINLINER [CLEANUP] - 1.2 TOPELEMENT & SCHIL HERSTEL",            "[STRUCTURE]");
