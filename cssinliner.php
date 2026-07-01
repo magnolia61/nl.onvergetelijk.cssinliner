@@ -89,6 +89,14 @@ function cssinliner_civicrm_pre($op, $objectName, $id, &$params) {
 /**
  * Hook: alterMailParams
  * Onderschept de mail net voor verzending om CSS in te linen (UI & API/Cron).
+ *
+ * Verwante alterMailParams-hooks elders (géén overlap in verantwoordelijkheid):
+ * - nl.onvergetelijk.batchreminders: CLI-only throttling/logging van batch-reminders.
+ * - nl.onvergetelijk.event: registreert de token {event.gcalendar_link} (agenda-link
+ *   voor "Add to calendar"-knoppen) via civi.token.list/eval — GEEN alterMailParams,
+ *   maar wel gerelateerd aan mail-verrijking rond hetzelfde send-moment.
+ * Deze hook (cssinliner) doet uitsluitend HTML/CSS-opmaak; geen van de bovenstaande
+ * vult hier iets in.
  */
 function cssinliner_civicrm_alterMailParams(&$params, $context = NULL) {
     $extdebug   = 'cssinliner';
