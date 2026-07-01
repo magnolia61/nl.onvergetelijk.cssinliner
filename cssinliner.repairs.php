@@ -223,6 +223,10 @@ function ozk_repair_greeting(string $html): string {
         },
         $html
     );
+    // F: leidende <br> direct in .ozk-groet vóór de eigenlijke tekst strippen — de CSS
+    // (margin-top: 1.5em op .ozk-groet) zorgt al voor de bovenmarge; een handmatige <br>
+    // erbovenop gaf dubbele witruimte boven de aanhef (zie template 162/600, jul 2026).
+    $html = preg_replace('/(<div class="ozk-groet">)\s*<br\s*\/?>\s*/i', '$1', $html);
     return $html;
 }
 
