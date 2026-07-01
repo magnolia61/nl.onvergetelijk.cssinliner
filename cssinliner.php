@@ -458,13 +458,6 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
     $safe_title = preg_replace('/\{[^}]*\}/', '', $title); // strip Smarty-tags zodat {$smarty.now|date_format:&quot;...&quot;} niet crasht
     $clean_html .= "    <title>" . htmlspecialchars($safe_title) . "</title>\n";
     $clean_html .= "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
-    // Rambla (h3-koppen) via een echte head-<link> i.p.v. de stray body-tag die hierboven
-    // (bij finale verzending) juist verwijderd wordt. Zo overleeft het font-verzoek de
-    // verzending zelf — voorheen belandde de link altijd in de body en werd 'ie daar
-    // weggegooid, waardoor Rambla nooit bij een ontvanger terechtkwam.
-    if ($is_final_send) {
-        $clean_html .= "    <link href=\"https://fonts.googleapis.com/css?family=Rambla\" rel=\"stylesheet\">\n";
-    }
     $clean_html .= "</head>\n";
     $clean_html .= "<body style=\"margin:0;padding:0;font-family:Arial,sans-serif;\">\n";
     $clean_html .= trim($html) . "\n";
