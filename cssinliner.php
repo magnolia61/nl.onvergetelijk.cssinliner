@@ -343,8 +343,11 @@ function _cssinliner_cleanup_html($html, $title = 'Onvergetelijke Zomerkampen', 
         $stats['php_foutmeldingen_gestript']
     );
 
-    // 1. Verwijder HTML comments volledig
-    $html       = preg_replace('//is', '', $html, -1, $stats['html_comments_verwijderd']);
+    // 1. Verwijder HTML comments volledig, behalve Outlook/MSO conditional comments
+    //    (<!--[if mso]>...<![endif]--> en de downlevel-revealed vorm <!--[if !mso]--> ... <!--<![endif]-->,
+    //    zoals gebruikt in de Mosaico-nieuwsbriefsjablonen). Was een lege regex ('//is', pure no-op:
+    //    kostte ~11ms/mail aan zero-width matches zonder ooit iets te strippen) — 2-jul-2026.
+    $html       = preg_replace('/<!--(?!\[if\b|<!\[endif\])[\s\S]*?-->/i', '', $html, -1, $stats['html_comments_verwijderd']);
 
     // 2. Ruim stray tekst op van eerdere foutieve pogingen
     $html       = str_replace('> alt=""', '>', $html, $stats['stray_alt_tekst_verwijderd']);
